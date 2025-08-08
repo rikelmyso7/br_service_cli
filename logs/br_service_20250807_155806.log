@@ -1,0 +1,50 @@
+2025-08-07 15:58:06 - br_service - INFO - [USER PROGRESS] Validando arquivo de entrada... | Progresso: None%
+2025-08-07 15:58:06 - br_service - INFO - [USER INFO] ✅ Arquivo válido
+2025-08-07 15:58:06 - br_service - INFO - [USER PROGRESS] Validando pasta de destino... | Progresso: None%
+2025-08-07 15:58:06 - br_service - WARNING - [USER WARNING] ⚠️ Nenhum documento selecionado - todos serão processados
+2025-08-07 15:58:06 - br_service - INFO - [USER INFO] ℹ️ Nenhum filtro de data - todos os períodos serão processados
+2025-08-07 15:58:06 - br_service - INFO - [USER INFO] ✅ Pasta de destino válida e acessível
+2025-08-07 15:58:06 - br_service - INFO - [USER PROGRESS] Iniciando leitura do arquivo Excel... | Progresso: None%
+2025-08-07 15:58:06 - br_service - INFO - Iniciando leitura do arquivo: /home/satellitus/Documents/rikelmy/Connect Joquei 2025-06.xlsx
+2025-08-07 15:58:06 - br_service - INFO - [USER SUCCESS] Planilha 'Layout' encontrada
+2025-08-07 15:58:06 - br_service - INFO - [USER PROGRESS] Analisando estrutura da planilha... | Progresso: None%
+2025-08-07 15:58:06 - br_service - INFO - [USER PROGRESS] Procurando linha de cabeçalho... | Progresso: None%
+2025-08-07 15:58:06 - br_service - INFO - [USER SUCCESS] Linha de cabeçalho encontrada na linha 4
+2025-08-07 15:58:06 - br_service - INFO - Linha de cabeçalho encontrada na linha 4
+2025-08-07 15:58:06 - br_service - INFO - [USER PROGRESS] Extraindo documentos e planos financeiros... | Progresso: None%
+2025-08-07 15:58:06 - br_service - INFO - [USER INFO] Documento encontrado: AZ-1.01.02.01
+2025-08-07 15:58:06 - br_service - INFO - [USER INFO] Documento encontrado: ADTC-1.04.01.07
+2025-08-07 15:58:06 - br_service - INFO - [USER INFO] Documento encontrado: REG-1.04.01.08
+2025-08-07 15:58:06 - br_service - INFO - [USER SUCCESS] 3 documentos/planos encontrados
+2025-08-07 15:58:06 - br_service - INFO - [USER PROGRESS] Carregando dados da planilha... | Progresso: None%
+2025-08-07 15:58:06 - br_service - INFO - [USER PROGRESS] Processando blocos de dados... | Progresso: None%
+2025-08-07 15:58:06 - br_service - INFO - [USER PROGRESS] Processando AZ-1.01.02.01... | Progresso: None%
+2025-08-07 15:58:06 - br_service - INFO - [USER SUCCESS] 26 registros válidos para AZ-1.01.02.01
+2025-08-07 15:58:06 - br_service - INFO - [USER PROGRESS] Processando ADTC-1.04.01.07... | Progresso: None%
+2025-08-07 15:58:06 - br_service - INFO - [USER SUCCESS] 26 registros válidos para ADTC-1.04.01.07
+2025-08-07 15:58:06 - br_service - INFO - [USER PROGRESS] Processando REG-1.04.01.08... | Progresso: None%
+2025-08-07 15:58:06 - br_service - WARNING - [USER WARNING] Nenhum dado válido encontrado para REG-1.04.01.08
+2025-08-07 15:58:06 - br_service - INFO - [USER PROGRESS] Combinando todos os dados... | Progresso: None%
+2025-08-07 15:58:06 - br_service - INFO - [USER SUCCESS] Leitura concluída: 52 registros totais processados
+2025-08-07 15:58:06 - br_service - INFO - Leitura concluída com sucesso: 52 registros, 3 documentos/planos
+2025-08-07 15:58:06 - br_service - INFO - [USER PROGRESS] Iniciando processamento de dados... | Progresso: None%
+2025-08-07 15:58:06 - br_service - INFO - Iniciando processamento de dados com filtros.
+2025-08-07 15:58:06 - br_service - WARNING - [USER WARNING] ⚠️ Nenhum documento selecionado - todos serão processados
+2025-08-07 15:58:06 - br_service - INFO - [USER INFO] ℹ️ Nenhum filtro de data - todos os períodos serão processados
+2025-08-07 15:58:06 - br_service - INFO - [USER INFO] ✅ Pasta de destino válida e acessível
+2025-08-07 15:58:06 - br_service - INFO - [USER INFO] Nenhum documento selecionado. Processando todos os 2 documentos únicos.
+2025-08-07 15:58:06 - br_service - INFO - [USER SUCCESS] Dados processados para AZ-1.01.02.01: 26 registros.
+2025-08-07 15:58:06 - br_service - INFO - [USER SUCCESS] Dados processados para ADTC-1.04.01.07: 26 registros.
+2025-08-07 15:58:06 - br_service - INFO - [USER SUCCESS] Processamento de dados concluído com sucesso.
+2025-08-07 15:58:06 - br_service - INFO - Processamento concluído. 2 combinações documento-plano geradas.
+2025-08-07 15:58:06 - br_service - INFO - [USER PROGRESS] Iniciando geração de arquivos de saída... | Progresso: None%
+2025-08-07 15:58:06 - br_service - INFO - Iniciando geração de arquivos na pasta: /home/satellitus/Downloads/BR_SERVICE_Sistema_Completo/BR_SERVICE/output
+2025-08-07 15:58:06 - br_service - WARNING - [USER WARNING] ⚠️ Nenhum documento selecionado - todos serão processados
+2025-08-07 15:58:06 - br_service - INFO - [USER INFO] ℹ️ Nenhum filtro de data - todos os períodos serão processados
+2025-08-07 15:58:06 - br_service - INFO - [USER INFO] ✅ Pasta de destino válida e acessível
+2025-08-07 15:58:06 - br_service - INFO - [USER SUCCESS] Arquivo gerado com sucesso: /home/satellitus/Downloads/BR_SERVICE_Sistema_Completo/BR_SERVICE/output/AZ-1.01.02.01.xls
+2025-08-07 15:58:06 - br_service - INFO - Arquivo gerado: /home/satellitus/Downloads/BR_SERVICE_Sistema_Completo/BR_SERVICE/output/AZ-1.01.02.01.xls
+2025-08-07 15:58:06 - br_service - INFO - [USER SUCCESS] Arquivo gerado com sucesso: /home/satellitus/Downloads/BR_SERVICE_Sistema_Completo/BR_SERVICE/output/ADTC-1.04.01.07.xls
+2025-08-07 15:58:06 - br_service - INFO - Arquivo gerado: /home/satellitus/Downloads/BR_SERVICE_Sistema_Completo/BR_SERVICE/output/ADTC-1.04.01.07.xls
+2025-08-07 15:58:06 - br_service - INFO - [USER SUCCESS] Geração de arquivos concluída. Total de 2 arquivos gerados.
+2025-08-07 15:58:06 - br_service - INFO - Geração de arquivos concluída. Total de 2 arquivos gerados.
