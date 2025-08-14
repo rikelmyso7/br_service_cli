@@ -1,92 +1,138 @@
-import pandas as pd
-import os
-from typing import Dict, List
+from __future__ import annotations
+
 from pathlib import Path
+import pandas as pd
+from openpyxl.utils import get_column_letter
+from openpyxl.styles import numbers
+from typing import Callable, Optional
 
-from ..utils.exceptions import ProcessamentoError
-from ..utils.logger import get_logger, get_user_logger
-from ..validacao.validador import ValidadorDados
+from utils.logger import configurar_logger
 
-logger = get_logger()
-user_logger = get_user_logger()
-validador = ValidadorDados()
+logger = configurar_logger(__name__)
 
-def gerar_arquivos_saida(dados_processados: Dict[str, pd.DataFrame], pasta_destino: str) -> List[str]:
+def _sanitize(s: str) -> str:
     """
-    Gera arquivos de saída para cada combinação documento-plano financeiro.
-    
-    Args:
-        dados_processados: Dicionário onde a chave é 'Documento-PlanoFinanceiro' e o valor é o DataFrame.
-        pasta_destino: Caminho da pasta onde os arquivos serão salvos.
-        
-    Returns:
-        Lista de caminhos dos arquivos gerados.
+    Remove caracteres inválidos para nomes de arquivo/pasta no Windows/macOS.
     """
-    user_logger.progress_user("Iniciando geração de arquivos de saída...")
-    logger.info(f"Iniciando geração de arquivos na pasta: {pasta_destino}")
+    return "".join(c for c in str(s) if c not in '\\/:*?"<>|').strip()
 
-    arquivos_gerados = []
+class Gerador:
+    """
+    Gera arquivos Excel de saída a partir dos DataFrames processados por bloco.
     
-    try:
-        # Valida e cria a pasta de destino
-        validacao_pasta_ok, mensagens_pasta = validador.validar_selecao_usuario(
-            [], None, None, pasta_destino
-        )
-        for msg in mensagens_pasta:
-            if "❌" in msg:
-                user_logger.error_user(msg)
-            elif "⚠️" in msg:
-                user_logger.warning_user(msg)
-            else:
-                user_logger.info_user(msg)
+    Recursos:
+    - Garante a presença de colunas de data esperadas (Emissão, Vencimento, Competência).
+    - Aplica formatação de data e número no Excel.
+    - Cria pastas por documento e versiona arquivo se já existir.
+    """
 
-        if not validacao_pasta_ok:
-            raise ProcessamentoError("Geração de arquivos", f"Pasta de destino inválida: {pasta_destino}")
+    def __init__(self, colunas_saida: list[str] | None = None):
+        """
+        Args:
+            colunas_saida (list[str] | None): Ordem de colunas na saída.
+                Se None, usa um conjunto padrão comum.
+        """
+        self.colunas_saida = colunas_saida or [
+            "Contrato",
+            "Valor",
+            "Data Crédito",
+            "Emissão",
+            "Vencimento",
+            "Competência",
+        ]
 
-        if not dados_processados:
-            user_logger.warning_user("Nenhum dado processado para gerar arquivos.")
-            return []
+    def _formatar_planilha(self, writer: pd.ExcelWriter, sheet_name: str, df_out: pd.DataFrame) -> None:
+        """
+        Aplica formatação simples na planilha:
+        - Largura de colunas proporcional ao cabeçalho
+        - Congelamento do cabeçalho
+        - Formato de data e número para colunas conhecidas
+        """
+        ws = writer.book[sheet_name]
+        ws.freeze_panes = "A2"
 
-        for chave, df_saida in dados_processados.items():
-            documento, plano = chave.split("-", 1) # Divide apenas no primeiro hífen
+        # Larguras
+        for i, col in enumerate(df_out.columns, start=1):
+            ws.column_dimensions[get_column_letter(i)].width = max(12, min(40, len(col) + 2))
 
-            nome_arquivo = f"{documento}-{plano}.xls"
-            caminho_completo = Path(pasta_destino) / nome_arquivo
+        # Formatos
+        col_idx = {c: i + 1 for i, c in enumerate(df_out.columns)}
+        fmt_date = "dd/mm/yyyy"
+        fmt_num = numbers.FORMAT_NUMBER_00
 
-            # Seleciona apenas as colunas necessárias para o arquivo de saída
-            # As colunas 'Emissão', 'Vencimento', 'Competência' são adicionadas no processador.py
-            colunas_saida = ["Contrato", "Valor", "Emissão", "Vencimento", "Competência"]
-            df_final_saida = df_saida[colunas_saida].copy()
+        for r in range(2, ws.max_row + 1):
+            # Datas
+            for c in ("Data Crédito", "Emissão", "Vencimento", "Competência"):
+                if c in col_idx:
+                    ws.cell(r, col_idx[c]).number_format = fmt_date
+            # Valor com duas casas
+            if "Valor" in col_idx:
+                ws.cell(r, col_idx["Valor"]).number_format = fmt_num
 
-            df_final_saida = df_final_saida[df_final_saida["Valor"] > 0]
+    def gerar_arquivos_saida(self, dados: dict, pasta_destino, nome_pasta:  str | None = None, sheet_name: str = "Dados", progress_cb: Optional[Callable[[int, int, str], None]] = None,) -> list[Path]:
+        """
+        Gera um arquivo Excel por bloco (Documento, Plano) com colunas padronizadas.
 
-            df_final_saida["Valor"] = df_final_saida["Valor"].round(2)
+        Args:
+            dados: dict[(Documento, Plano), pd.DataFrame]
+            pasta_destino: str | PathLike — pasta raiz de saída
+            sheet_name: nome da planilha no Excel
 
-            if df_final_saida.empty:
-                user_logger.warning_user(f"Aviso: Nenhum dado para gerar para {documento}-{plano}.xls")
+        Returns:
+            list[Path]: caminhos dos arquivos gerados.
+        """
+        out_paths: list[Path] = []
+        root = Path(pasta_destino)
+        root.mkdir(parents=True, exist_ok=True)
+
+        total = len(dados)
+
+        for idx, ((doc, plano), df) in enumerate(dados.items(), start=1):
+            if df.empty:
+                logger.warning(f"Sem linhas para {doc}-{plano}. Pulando geração.")
                 continue
 
-            try:
-                # Usa xlsxwriter para gerar arquivo .xls (na verdade .xlsx)
-                df_final_saida.to_excel(caminho_completo, index=False, engine='xlsxwriter')
-                user_logger.success_user(f"Arquivo gerado com sucesso: {caminho_completo}")
-                logger.info(f"Arquivo gerado: {caminho_completo}")
-                arquivos_gerados.append(str(caminho_completo))
-            except Exception as e:
-                user_logger.error_user(f"Erro ao gerar o arquivo {nome_arquivo}: {str(e)}")
-                logger.error(f"Erro ao gerar o arquivo {nome_arquivo}: {str(e)}")
-                # Não levanta exceção para permitir que outros arquivos sejam gerados
-        
-        if not arquivos_gerados:
-            user_logger.warning_user("Nenhum arquivo de saída foi gerado com sucesso.")
+            df_out = df.copy()
 
-        user_logger.success_user(f"Geração de arquivos concluída. Total de {len(arquivos_gerados)} arquivos gerados.")
-        logger.info(f"Geração de arquivos concluída. Total de {len(arquivos_gerados)} arquivos gerados.")
-        return arquivos_gerados
+            # Garante colunas de data derivadas de 'Data Crédito' se não existirem
+            for col in ("Emissão", "Vencimento", "Competência"):
+                if col not in df_out.columns:
+                    df_out[col] = df_out.get("Data Crédito")
 
-    except Exception as e:
-        user_logger.error_user(f"Erro inesperado na geração de arquivos: {str(e)}")
-        logger.error(f"Erro inesperado na geração de arquivos: {str(e)}")
-        raise ProcessamentoError("Geração de arquivos", str(e))
+            # Garante todas as colunas de saída
+            faltantes = [c for c in self.colunas_saida if c not in df_out.columns]
+            for m in faltantes:
+                df_out[m] = ""
 
+            df_out = df_out[self.colunas_saida]
 
+            # Pasta de destino do arquivo
+            if nome_pasta:
+                dir_doc = root / _sanitize(nome_pasta)
+            else:
+                dir_doc = root / _sanitize(doc)
+            dir_doc.mkdir(parents=True, exist_ok=True)
+
+            base = f"{_sanitize(doc)}-{_sanitize(plano)}.xlsx"
+            path = dir_doc / base
+
+            # Versiona se já existir
+            k = 2
+            while path.exists():
+                path = dir_doc / f"{_sanitize(doc)}-{_sanitize(plano)}-v{k}.xlsx"
+                k += 1
+
+            with pd.ExcelWriter(path, engine="openpyxl", date_format="DD/MM/YYYY") as w:
+                df_out.to_excel(w, index=False, sheet_name=sheet_name)
+                self._formatar_planilha(w, sheet_name, df_out)
+
+        # Progresso por arquivo
+        if progress_cb:
+            progress_cb(idx, total, str(path))
+
+        logger.info(f"Arquivo gerado: {path}")
+        out_paths.append(path)
+
+        if not out_paths:
+            logger.warning("Nenhum arquivo foi gerado (todos os blocos estavam vazios).")
+        return out_paths
