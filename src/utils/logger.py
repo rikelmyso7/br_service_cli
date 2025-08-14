@@ -1,232 +1,97 @@
 """
-Módulo de logging para o sistema BR_SERVICE.
-Configura e gerencia os logs da aplicação.
+logger.py
+
+Configura e fornece um logger centralizado para o sistema BR Service.
+- Evita handlers duplicados.
+- Suporta arquivo de log (com criação de diretório).
+- Suporte opcional a RotatingFileHandler.
 """
 
+from __future__ import annotations
+
 import logging
+import logging.handlers
 import os
-from datetime import datetime
 from pathlib import Path
 from typing import Optional
+from datetime import datetime, timezone
+import json, sys
 
+_HANDLER_KEYS: set[str] = set()  # para evitar duplicar handlers em reconfigurações
 
-class LoggerConfig:
-    """Configuração do sistema de logging."""
-    
-    def __init__(self, 
-                 log_level: str = "INFO",
-                 log_dir: str = "logs",
-                 log_filename: Optional[str] = None,
-                 console_output: bool = True):
-        """
-        Inicializa a configuração do logger.
-        
-        Args:
-            log_level: Nível de log (DEBUG, INFO, WARNING, ERROR, CRITICAL)
-            log_dir: Diretório para salvar os arquivos de log
-            log_filename: Nome do arquivo de log (se None, usa timestamp)
-            console_output: Se deve exibir logs no console
-        """
-        self.log_level = getattr(logging, log_level.upper())
-        self.log_dir = Path(log_dir)
-        self.console_output = console_output
-        
-        # Cria o diretório de logs se não existir
-        self.log_dir.mkdir(exist_ok=True)
-        
-        # Define o nome do arquivo de log
-        if log_filename is None:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            self.log_filename = f"br_service_{timestamp}.log"
-        else:
-            self.log_filename = log_filename
-        
-        self.log_filepath = self.log_dir / self.log_filename
-    
-    def setup_logger(self, logger_name: str = "br_service") -> logging.Logger:
-        """
-        Configura e retorna o logger.
-        
-        Args:
-            logger_name: Nome do logger
-            
-        Returns:
-            Logger configurado
-        """
-        logger = logging.getLogger(logger_name)
-        logger.setLevel(self.log_level)
-        
-        # Remove handlers existentes para evitar duplicação
-        for handler in logger.handlers[:]:
-            logger.removeHandler(handler)
-        
-        # Formato das mensagens de log
-        formatter = logging.Formatter(
-            '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-            datefmt='%Y-%m-%d %H:%M:%S'
-        )
-        
-        # Handler para arquivo
-        file_handler = logging.FileHandler(
-            self.log_filepath, 
-            encoding='utf-8'
-        )
-        file_handler.setLevel(self.log_level)
-        file_handler.setFormatter(formatter)
-        logger.addHandler(file_handler)
-        
-        # Handler para console (se habilitado)
-        if self.console_output:
-            console_handler = logging.StreamHandler()
-            console_handler.setLevel(self.log_level)
-            console_handler.setFormatter(formatter)
-            logger.addHandler(console_handler)
-        
-        return logger
-
-
-class UserFriendlyLogger:
+def emit_event(ev: str, *, msg: str | None = None, progress: float | None = None, **extra):
     """
-    Logger amigável para o usuário final.
-    Fornece mensagens de log formatadas para exibição na UI.
+    Emite uma linha JSON (NDJSON) no stdout com flush imediato.
+    Ex.: {"event":"READ","msg":"Lendo ...","progress":0.10}
     """
-    
-    def __init__(self, logger: logging.Logger):
-        """
-        Inicializa o logger amigável.
-        
-        Args:
-            logger: Logger base para registrar mensagens técnicas
-        """
-        self.logger = logger
-        self.user_messages = []
-    
-    def info_user(self, message: str, technical_details: str = None):
-        """
-        Registra uma mensagem informativa para o usuário.
-        
-        Args:
-            message: Mensagem amigável para o usuário
-            technical_details: Detalhes técnicos para o log
-        """
-        self.user_messages.append(f"ℹ️ {message}")
-        log_msg = f"[USER INFO] {message}"
-        if technical_details:
-            log_msg += f" | Detalhes: {technical_details}"
-        self.logger.info(log_msg)
-    
-    def success_user(self, message: str, technical_details: str = None):
-        """
-        Registra uma mensagem de sucesso para o usuário.
-        
-        Args:
-            message: Mensagem amigável para o usuário
-            technical_details: Detalhes técnicos para o log
-        """
-        self.user_messages.append(f"✅ {message}")
-        log_msg = f"[USER SUCCESS] {message}"
-        if technical_details:
-            log_msg += f" | Detalhes: {technical_details}"
-        self.logger.info(log_msg)
-    
-    def warning_user(self, message: str, technical_details: str = None):
-        """
-        Registra uma mensagem de aviso para o usuário.
-        
-        Args:
-            message: Mensagem amigável para o usuário
-            technical_details: Detalhes técnicos para o log
-        """
-        self.user_messages.append(f"⚠️ {message}")
-        log_msg = f"[USER WARNING] {message}"
-        if technical_details:
-            log_msg += f" | Detalhes: {technical_details}"
-        self.logger.warning(log_msg)
-    
-    def error_user(self, message: str, technical_details: str = None):
-        """
-        Registra uma mensagem de erro para o usuário.
-        
-        Args:
-            message: Mensagem amigável para o usuário
-            technical_details: Detalhes técnicos para o log
-        """
-        self.user_messages.append(f"❌ {message}")
-        log_msg = f"[USER ERROR] {message}"
-        if technical_details:
-            log_msg += f" | Detalhes: {technical_details}"
-        self.logger.error(log_msg)
-    
-    def progress_user(self, message: str, percentage: int = None):
-        """
-        Registra uma mensagem de progresso para o usuário.
-        
-        Args:
-            message: Mensagem de progresso
-            percentage: Percentual de progresso (0-100)
-        """
-        if percentage is not None:
-            formatted_message = f"🔄 {message} ({percentage}%)"
-        else:
-            formatted_message = f"🔄 {message}"
-        
-        self.user_messages.append(formatted_message)
-        self.logger.info(f"[USER PROGRESS] {message} | Progresso: {percentage}%")
-    
-    def get_user_messages(self) -> list:
-        """
-        Retorna todas as mensagens para o usuário.
-        
-        Returns:
-            Lista de mensagens formatadas para o usuário
-        """
-        return self.user_messages.copy()
-    
-    def clear_user_messages(self):
-        """Limpa as mensagens do usuário."""
-        self.user_messages.clear()
+    payload = {"event": ev, "ts": datetime.now(timezone.utc).isoformat()}
+    if msg is not None:
+        payload["msg"] = msg
+    if progress is not None:
+        # clamp e arredonda para estética
+        progress = max(0.0, min(1.0, float(progress)))
+        payload["progress"] = round(progress, 4)
+    payload.update(extra)
+    print(json.dumps(payload, ensure_ascii=False), flush=True)
 
-
-# Instância global do logger
-_logger_config = None
-_logger = None
-_user_logger = None
-
-
-def get_logger(log_level: str = "INFO") -> logging.Logger:
+def configurar_logger(
+    nome_logger: str = "br_service",
+    nivel: int | str = logging.INFO,
+    caminho_log: Optional[str | os.PathLike[str]] = None,
+    rotating: bool = False,
+    max_bytes: int = 5 * 1024 * 1024,
+    backup_count: int = 3,
+) -> logging.Logger:
     """
-    Retorna o logger configurado.
-    
+    Configura e retorna uma instância de logger.
+
     Args:
-        log_level: Nível de log
-        
+        nome_logger: Nome do logger (namespace).
+        nivel: nível mínimo de log (int ou "INFO"/"DEBUG"...).
+        caminho_log: caminho para arquivo de log (se None, sem arquivo).
+        rotating: se True, usa RotatingFileHandler.
+        max_bytes: tamanho máximo do arquivo de log antes de rotacionar.
+        backup_count: quantidade de arquivos de histórico mantidos.
+
     Returns:
-        Logger configurado
+        logging.Logger configurado.
     """
-    global _logger_config, _logger
-    
-    if _logger is None:
-        _logger_config = LoggerConfig(log_level=log_level)
-        _logger = _logger_config.setup_logger()
-    
-    return _logger
+    if isinstance(nivel, str):
+        from ..config.configuracao import get_log_level  # evita dependência circular no import global
+        nivel = get_log_level(nivel)
 
+    logger = logging.getLogger(nome_logger)
+    logger.setLevel(nivel)
+    logger.propagate = False  # não propagar para root para evitar logs duplicados no console
 
-def get_user_logger(log_level: str = "INFO") -> UserFriendlyLogger:
-    """
-    Retorna o logger amigável para o usuário.
-    
-    Args:
-        log_level: Nível de log
-        
-    Returns:
-        Logger amigável configurado
-    """
-    global _user_logger
-    
-    if _user_logger is None:
-        base_logger = get_logger(log_level)
-        _user_logger = UserFriendlyLogger(base_logger)
-    
-    return _user_logger
+    fmt = logging.Formatter(
+        "%(asctime)s | %(levelname)s | %(name)s | %(module)s:%(lineno)d | %(message)s"
+    )
 
+    # Console handler (sempre)
+    console_key = f"{nome_logger}::console"
+    if console_key not in _HANDLER_KEYS:
+        ch = logging.StreamHandler()
+        ch.setLevel(nivel)
+        ch.setFormatter(fmt)
+        logger.addHandler(ch)
+        _HANDLER_KEYS.add(console_key)
+
+    # File handler (opcional)
+    if caminho_log:
+        log_path = Path(caminho_log)
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        file_key = f"{nome_logger}::file::{log_path.resolve()}::{rotating}"
+        if file_key not in _HANDLER_KEYS:
+            if rotating:
+                fh = logging.handlers.RotatingFileHandler(
+                    log_path, maxBytes=max_bytes, backupCount=backup_count, encoding="utf-8"
+                )
+            else:
+                fh = logging.FileHandler(log_path, encoding="utf-8")
+            fh.setLevel(nivel)
+            fh.setFormatter(fmt)
+            logger.addHandler(fh)
+            _HANDLER_KEYS.add(file_key)
+
+    return logger
