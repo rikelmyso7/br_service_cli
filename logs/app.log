@@ -1,4 +1,0 @@
-2025-08-07 13:18:59,693 - INFO - Pasta de destino criada: ./output_test
-2025-08-07 13:19:00,922 - INFO - Opções de documentos e datas retornadas.
-2025-08-07 13:19:07,449 - INFO - Processamento concluído com sucesso. Arquivos gerados: ['./output_test/AZ-1.01.02.01.xls', './output_test/REG-1.04.01.08.xls']
-2025-08-07 13:19:23,958 - INFO - Processamento concluído com sucesso. Arquivos gerados: ['./output_test/ADTC-1.02.01.09.xls', './output_test/ADTC-1.04.01.07.xls', './output_test/ADTC-1.04.01.20.xls', './output_test/ADTC-2.01.09.15.xls', './output_test/AZ-1.01.02.01.xls', './output_test/COND-2.01.09.17.xls', './output_test/EO-2.01.09.13.xls', './output_test/REG-1.04.01.08.xls', './output_test/TTT-1.04.01.19.xls', './output_test/TX-2.01.09.20.xls']

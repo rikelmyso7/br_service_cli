@@ -1,79 +1,106 @@
 # BR SERVICE
 
-Este projeto implementa um sistema para processamento de dados financeiros de arquivos Excel, com foco na geração de arquivos de importação para o Sienge.
+Este projeto implementa um sistema Python para processamento de arquivos Excel, focado na extração, transformação e geração de dados financeiros para importação em sistemas externos, como o Sienge. A aplicação é projetada para ser modular, robusta e se comunicar com uma interface gráfica desenvolvida em Flutter.
 
-## Arquitetura do Sistema
+## Funcionalidades Principais
 
-A arquitetura do sistema é modular, dividida em componentes com responsabilidades específicas:
+- **Análise de Arquivos Excel**: Leitura e interpretação de planilhas financeiras, com foco na planilha 'Layout'.
+- **Extração Dinâmica de Dados**: Identificação flexível de colunas chave ('Contrato', 'Valor', 'Data Crédito') e metadados ('Documento', 'Plano Financeiro').
+- **Processamento e Normalização**: Tratamento de valores numéricos e datas para garantir consistência e formatação adequada.
+- **Geração de Arquivos de Saída**: Criação de arquivos Excel (.xls) formatados para importação, com base em seleções do usuário.
+- **Comunicação com UI (Flutter)**: Interface via Standard I/O para troca de opções e parâmetros.
+- **Tratamento de Erros e Logs**: Mecanismos robustos para validação de dados e registro de eventos.
+
+## Estrutura do Projeto
+
+A arquitetura do projeto segue um design modular, onde cada componente possui responsabilidades bem definidas, promovendo a manutenibilidade e escalabilidade do sistema.
 
 ```
 BR_SERVICE/
 ├── src/
-│   ├── processamento/       # Módulos para leitura, processamento e geração de dados
-│   │   ├── leitor.py        # Responsável pela leitura do arquivo Excel e extração de dados da planilha 'Layout'
-│   │   ├── processador.py   # Responsável pelo processamento e transformação dos dados extraídos
-│   │   └── gerador.py       # Responsável pela geração dos arquivos de saída no formato Excel
-│   ├── validacao/           # Módulos para validação de dados
-│   │   └── validador.py     # Contém funções para validar colunas, formatos de data e valores numéricos
-│   ├── config/              # Módulos de configuração
-│   │   └── configuracao.py  # Pode ser usado para armazenar configurações globais do sistema
-│   └── utils/               # Utilitários gerais
-│       ├── exceptions.py    # Definições de exceções personalizadas para o sistema
-│       └── logger.py        # Configuração e funções para registro de logs
-├── config.json              # Arquivo de configuração (atualmente não utilizado, mas pode ser expandido)
-├── logs/                    # Diretório para armazenar arquivos de log
-├── tests/                   # Diretório para testes unitários e de integração
-├── build.py                 # Script para empacotamento da aplicação (ex: com PyInstaller)
-├── requirements.txt         # Lista de dependências Python do projeto
-└── README.md                # Documentação do projeto
+│   ├── processamento/
+│   │   ├── leitor.py
+│   │   ├── processador.py
+│   │   └── gerador.py
+│   ├── validacao/
+│   │   └── validador.py
+│   ├── config/
+│   │   └── configuracao.py
+│   └── utils/
+│       ├── exceptions.py
+│       └── logger.py
+├── config.json
+├── logs/
+├── tests/
+├── build.py
+├── requirements.txt
+└── README.md
 ```
 
-## Fluxo de Trabalho
+### Descrição dos Módulos:
 
-O sistema opera através de um fluxo de trabalho que interage com uma interface gráfica (Flutter Desktop):
+- **`src/processamento/`**:
+    - `leitor.py`: Responsável pela leitura e interpretação inicial dos arquivos Excel. Identifica a estrutura da planilha 'Layout', extrai os cabeçalhos e os metadados (Documento e Plano Financeiro).
+    - `processador.py`: Realiza a transformação e limpeza dos dados extraídos. Inclui a normalização de valores numéricos, formatação de datas e filtragem de dados com base nas seleções do usuário.
+    - `gerador.py`: Encarregado da criação dos arquivos de saída (.xls). Formata os dados processados de acordo com o layout de importação e organiza os arquivos nas pastas de destino.
 
-1.  **Seleção de Arquivo de Entrada**: O usuário seleciona um arquivo Excel contendo os dados financeiros.
-2.  **Extração de Opções**: O sistema Python lê o arquivo e extrai opções de 'Documentos' e 'Datas de Crédito' disponíveis, enviando-as para a interface gráfica em formato JSON.
-3.  **Seleção do Usuário**: A interface gráfica exibe as opções, permitindo ao usuário selecionar quais documentos e datas devem ser processados. O usuário também define a pasta de destino.
-4.  **Processamento de Dados**: As seleções do usuário são enviadas de volta ao Python. O sistema filtra e processa os dados da planilha 'Layout', aplicando formatação numérica e replicando datas para as colunas 'Emissão', 'Vencimento' e 'Competência'.
-5.  **Geração de Arquivos de Saída**: Para cada combinação de 'Documento' e 'Plano Financeiro' (ou para o arquivo inteiro, dependendo da granularidade da extração), um novo arquivo Excel é gerado na pasta de destino especificada, seguindo a nomenclatura `Documento-PlanoFinanceiro.xls`.
-6.  **Validação e Logs**: O sistema realiza validações durante o processo e registra quaisquer erros ou avisos em arquivos de log, que podem ser exibidos ao usuário.
+- **`src/validacao/`**:
+    - `validador.py`: Contém as regras de validação para os dados de entrada e saída. Garante a consistência dos dados e identifica possíveis inconsistências ou erros.
 
-## Regras de Negócio Principais
+- **`src/config/`**:
+    - `configuracao.py`: Gerencia as configurações da aplicação, como caminhos de arquivos, formatos padrão e outras definições que podem ser parametrizadas.
 
--   **Leitura de Dados**: Foco na planilha 'Layout' de arquivos Excel. Colunas como 'Contrato', 'Valor' e 'Data Crédito' são identificadas dinamicamente.
--   **Extração de Metadados**: 'Documento' e 'Plano Financeiro' são extraídos para nomeação dos arquivos de saída.
--   **Filtragem**: Os dados podem ser filtrados por 'Documento' e 'Data de Crédito' selecionados pelo usuário.
--   **Formatação Numérica**: Valores numéricos são formatados com ponto como separador decimal e duas casas decimais.
--   **Formatação de Datas**: Datas são formatadas como 'DD/MM/AAAA'.
--   **Colunas de Saída**: Os arquivos gerados contêm as colunas 'Contrato', 'Valor', 'Emissão', 'Vencimento' e 'Competência'. As três últimas replicam o valor da 'Data Crédito'.
--   **Comunicação UI-Python**: Realizada via Standard I/O (entrada/saída padrão) usando JSON para troca de opções e argumentos de linha de comando para seleções.
--   **Tratamento de Erros**: O sistema lida com colunas ausentes, formatos inválidos e seleções vazias, fornecendo mensagens de erro amigáveis.
+- **`src/utils/`**:
+    - `exceptions.py`: Define exceções personalizadas para o tratamento de erros específicos da aplicação, proporcionando mensagens de erro claras e informativas.
+    - `logger.py`: Implementa um sistema de log centralizado para registrar eventos, avisos e erros, facilitando a depuração e o monitoramento da aplicação.
 
-## Dependências
+- **`config.json`**: Arquivo de configuração em formato JSON para parâmetros globais da aplicação.
+- **`logs/`**: Diretório para armazenar os arquivos de log gerados pela aplicação.
+- **`tests/`**: Diretório para os testes unitários e de integração do sistema.
+- **`build.py`**: Script para empacotar a aplicação Python em um executável (usando PyInstaller).
+- **`requirements.txt`**: Lista de dependências Python necessárias para o projeto.
 
-As dependências Python necessárias estão listadas no `requirements.txt`:
+## Como Usar
 
--   `pandas`: Para manipulação e análise de dados.
--   `openpyxl`: Backend para leitura de arquivos `.xlsx` pelo pandas.
--   `xlsxwriter`: Backend para escrita de arquivos `.xlsx` pelo pandas.
+(Instruções detalhadas serão adicionadas após a implementação completa do sistema.)
 
-## Como Executar (Exemplo)
+## Desenvolvimento
 
-Para obter as opções de documentos e datas:
+### Pré-requisitos
+
+- Python 3.x
+- `pip` (gerenciador de pacotes Python)
+
+### Instalação de Dependências
 
 ```bash
-python main.py --input "caminho/para/seu/arquivo.xlsx" --output "caminho/para/pasta/destino" --get-options
+pip install -r requirements.txt
 ```
 
-Para processar dados com seleções específicas:
+### Execução
 
-```bash
-python main.py --input "caminho/para/seu/arquivo.xlsx" --output "caminho/para/pasta/destino" --documentos "AZ,REG" --datas "05/05/2025,27/05/2025"
-```
+O sistema será executado via linha de comando, comunicando-se com a UI Flutter. Exemplos de comandos:
 
-## Considerações de Desempenho
+- **Obter opções de documentos e datas:**
+  ```bash
+  python main.py --input <caminho_arquivo.xlsx> --output <pasta_destino> --get-options
+  ```
 
-O sistema é projetado para processar arquivos Excel grandes de forma eficiente, minimizando o uso de memória e o tempo de processamento, utilizando bibliotecas otimizadas como Pandas.
+- **Processar seleções e gerar arquivos:**
+  ```bash
+  python main.py --input <caminho_arquivo.xlsx> --output <pasta_destino> --documentos AZ,REG --datas 05/05/2025,27/05/2025
+  ```
+
+## Testes
+
+(Instruções para execução dos testes serão adicionadas.)
+
+## Contribuição
+
+(Diretrizes para contribuição serão adicionadas.)
+
+## Licença
+
+(Informações sobre a licença serão adicionadas.)
 
 

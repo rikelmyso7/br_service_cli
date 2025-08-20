@@ -1,9 +1,0 @@
-2025-08-07 16:56:20 - br_service - INFO - [USER PROGRESS] Validando arquivo de entrada... | Progresso: None%
-2025-08-07 16:56:20 - br_service - INFO - [USER INFO] ✅ Arquivo válido
-2025-08-07 16:56:20 - br_service - INFO - [USER PROGRESS] Obtendo opções disponíveis... | Progresso: None%
-2025-08-07 16:56:20 - br_service - INFO - Obtendo opções do arquivo: ./output/ADTC-1.04.01.07.xls
-2025-08-07 16:56:20 - br_service - INFO - [USER PROGRESS] Iniciando leitura do arquivo Excel... | Progresso: None%
-2025-08-07 16:56:20 - br_service - INFO - Iniciando leitura do arquivo: ./output/ADTC-1.04.01.07.xls
-2025-08-07 16:56:20 - br_service - ERROR - [USER ERROR] Planilha 'Layout' não encontrada
-2025-08-07 16:56:20 - br_service - ERROR - [USER ERROR] Erro ao obter opções: Planilha 'Layout' não encontrada. Detalhes: Planilhas disponíveis: Sheet1
-2025-08-07 16:56:20 - br_service - ERROR - Erro ao obter opções: Planilha 'Layout' não encontrada. Detalhes: Planilhas disponíveis: Sheet1

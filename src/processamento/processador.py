@@ -1,103 +1,186 @@
+from __future__ import annotations
+
+from typing import Iterable, Dict, Tuple
 import pandas as pd
 from datetime import datetime
-from typing import List, Tuple, Dict, Any
 
-from ..utils.exceptions import ProcessamentoError, ValidacaoError
-from ..utils.logger import get_logger, get_user_logger
-from ..validacao.validador import ValidadorDados
+from utils.logger import configurar_logger
 
-logger = get_logger()
-user_logger = get_user_logger()
-validador = ValidadorDados()
+logger = configurar_logger(__name__)
 
-def processar_dados(df_dados: pd.DataFrame, 
-                    documentos_selecionados: List[str],
-                    data_inicio: datetime = None,
-                    data_fim: datetime = None) -> Dict[str, pd.DataFrame]:
+def _to_date_series(s: pd.Series) -> pd.Series:
     """
-    Processa os dados do DataFrame, aplicando filtros de documento e data.
-    Retorna um dicionário de DataFrames, um para cada combinação documento-plano financeiro.
+    Normaliza uma série de datas para `datetime64[ns]` e retorna `.dt.date`.
+    Aceita série object com strings; tenta parsear sob dayfirst=True.
     """
-    user_logger.progress_user("Iniciando processamento de dados...")
-    logger.info("Iniciando processamento de dados com filtros.")
+    if s.dtype == "O":
+        s = pd.to_datetime(s, errors="coerce", dayfirst=True)
+    return s.dt.date
 
-    dados_filtrados = {}
-    
-    try:
-        # Validação das seleções do usuário
-        # A validação da pasta de destino será feita no gerador, pois é onde a pasta é criada/usada.
-        validacao_selecao_ok, mensagens_selecao = validador.validar_selecao_usuario(
-            documentos_selecionados, data_inicio, data_fim, "temp_path" # temp_path é um placeholder
-        )
-        for msg in mensagens_selecao:
-            if "❌" in msg:
-                user_logger.error_user(msg)
-            elif "⚠️" in msg:
-                user_logger.warning_user(msg)
-            else:
-                user_logger.info_user(msg)
+class Processador:
+    """
+    Realiza o pós-processamento e o filtro dos dados lidos do Excel
+    por Documento, Plano e Data(s).
+    """
 
-        if not validacao_selecao_ok:
-            user_logger.warning_user("Validação da seleção do usuário encontrou problemas. O processamento pode não ser o esperado.")
-            # Não levantamos erro aqui, apenas avisamos, pois o usuário pode querer processar tudo.
+    def processar_dados(
+        self,
+        dados_por_bloco: Dict[Tuple[str, str], pd.DataFrame],
+        documentos_selecionados: Iterable[str] | None = None,
+        datas_selecionadas: Iterable | None = None,
+        data_inicial: str | pd.Timestamp | None = None,
+        data_final: str | pd.Timestamp | None = None,
+        planos_selecionados: Iterable[str] | None = None,
+    ) -> Dict[Tuple[str, str], pd.DataFrame]:
+        """
+        Aplica filtros opcionais e devolve novos DataFrames por bloco.
 
-        # Se nenhum documento for selecionado, processa todos os documentos únicos
-        if not documentos_selecionados:
-            documentos_para_processar = df_dados["Documento"].unique().tolist()
-            user_logger.info_user(f"Nenhum documento selecionado. Processando todos os {len(documentos_para_processar)} documentos únicos.")
+        Args:
+            dados_por_bloco: dicionário {(Documento, Plano): DataFrame}
+            documentos_selecionados: filtra por documentos (exatos).
+            datas_selecionadas: coleção de datas específicas (date/datetime/'DD/MM/AAAA').
+            data_inicial: data mínima (inclusive) — pode ser 'DD/MM/AAAA'.
+            data_final: data máxima (inclusive) — pode ser 'DD/MM/AAAA'.
+            planos_selecionados: filtra por planos (exatos).
+
+        Returns:
+            dict[(Documento, Plano), DataFrame]: blocos filtrados e normalizados.
+        """
+        documentos_sel = set(map(str, documentos_selecionados)) if documentos_selecionados else None
+        planos_sel = set(map(str, planos_selecionados)) if planos_selecionados else None
+
+        # Normaliza datas específicas
+        datas_sel = set()
+        if datas_selecionadas:
+            s = pd.Series(list(datas_selecionadas))
+            if s.dtype == "O":
+                s = pd.to_datetime(s, errors="coerce", dayfirst=True)
+            datas_sel = set(s.dropna().dt.date.tolist())
+
+        # Normaliza intervalos
+        di = pd.to_datetime(data_inicial, errors="coerce", dayfirst=True).date() if data_inicial is not None else None
+        df_ = pd.to_datetime(data_final, errors="coerce", dayfirst=True).date() if data_final is not None else None
+
+        resultado: Dict[Tuple[str, str], pd.DataFrame] = {}
+        for (doc, plano), df in dados_por_bloco.items():
+            doc_plano_chave = f"{doc}-{plano}"
+            # Permite filtrar tanto por documento individual quanto por documento-plano
+            if documentos_sel and doc not in documentos_sel and doc_plano_chave not in documentos_sel:
+                continue
+            if planos_sel and plano not in planos_sel:
+                continue
+
+            temp = df.copy()
+
+            # Garante colunas essenciais
+            obrig = ["Contrato", "Valor", "Data Crédito"]
+            falt = [c for c in obrig if c not in temp.columns]
+            if falt:
+                logger.warning(f"Bloco {(doc, plano)} sem colunas obrigatórias: {falt}. Ignorando.")
+                continue
+
+            # Normaliza datas para date
+            temp["__date"] = _to_date_series(temp["Data Crédito"])
+
+            # Filtros de datas
+            if datas_sel:
+                temp = temp[temp["__date"].isin(datas_sel)]
+            if di:
+                temp = temp[temp["__date"] >= di]
+            if df_:
+                temp = temp[temp["__date"] <= df_]
+
+            if temp.empty:
+                continue
+
+            # Valor numérico com 2 casas
+            temp["Valor"] = pd.to_numeric(temp["Valor"], errors="coerce")
+
+            # Identifica e loga contratos com valor zerado
+            df_zerado = temp[temp["Valor"] == 0]
+            if not df_zerado.empty:
+                contratos_zero = df_zerado["Contrato"].dropna().astype(str).tolist()
+                logger.warning(
+                    f"Bloco {(doc, plano)} possui contratos com valor zerado: {', '.join(contratos_zero)}. Ignorando essas linhas."
+                )
+                temp = temp[temp["Valor"].notna() & (temp["Valor"] != 0)]
+
+            temp = temp.dropna(subset=["Valor"])
+
+            # Ordenação previsível
+            temp = temp.sort_values(["__date", "Contrato"]).drop(columns="__date")
+            resultado[(doc, plano)] = temp
+
+        if not resultado:
+            logger.warning("Processador retornou vazio após aplicação dos filtros.")
         else:
-            documentos_para_processar = documentos_selecionados
-            user_logger.info_user(f"Processando documentos selecionados: {', '.join(documentos_selecionados)}")
+            logger.info(f"Processador gerou {len(resultado)} blocos após filtros.")
+        return resultado
 
-        for documento in documentos_para_processar:
-            df_doc = df_dados[df_dados["Documento"] == documento].copy()
-            planos_financeiros = df_doc["Plano Financeiro"].unique().tolist()
-
-            for plano in planos_financeiros:
-                df_final = df_doc[df_doc["Plano Financeiro"] == plano].copy()
-
-                # Aplicar filtro de data, se houver
-                if data_inicio and data_fim:
-                    logger.debug(f'Tipo de df_final["Data Crédito"]: {df_final["Data Crédito"].dtype}')
-                    logger.debug(f'Data Crédito min: {df_final["Data Crédito"].min()}, max: {df_final["Data Crédito"].max()}')
-                    logger.debug(f"data_inicio: {data_inicio}, data_fim: {data_fim}")
-                    df_final = df_final[
-                        (df_final["Data Crédito"] >= data_inicio) &
-                        (df_final["Data Crédito"] <= data_fim)
-                    ]
-                    user_logger.info_user(f"Filtro de data aplicado para {documento}-{plano}: {data_inicio.strftime('%d/%m/%Y')} a {data_fim.strftime('%d/%m/%Y')}")
-                elif data_inicio:
-                    df_final = df_final[df_final["Data Crédito"] >= data_inicio]
-                    user_logger.info_user(f"Filtro de data aplicado para {documento}-{plano}: a partir de {data_inicio.strftime('%d/%m/%Y')}")
-                elif data_fim:
-                    df_final = df_final[df_final["Data Crédito"] <= data_fim]
-                    user_logger.info_user(f"Filtro de data aplicado para {documento}-{plano}: até {data_fim.strftime('%d/%m/%Y')}")
-
-                # Adicionar colunas Emissão, Vencimento, Competência
-                df_final["Emissão"] = df_final["Data Crédito"].dt.strftime("%d/%m/%Y")
-                df_final["Vencimento"] = df_final["Data Crédito"].dt.strftime("%d/%m/%Y")
-                df_final["Competência"] = df_final["Data Crédito"].dt.strftime("%d/%m/%Y")
-
-                # Formatar valores com duas casas decimais
-                df_final["Valor"] = df_final["Valor"].round(2)
-
-                if not df_final.empty:
-                    dados_filtrados[f"{documento}-{plano}"] = df_final
-                    user_logger.success_user(f"Dados processados para {documento}-{plano}: {len(df_final)} registros.")
-                else:
-                    user_logger.warning_user(f"Nenhum registro encontrado para {documento}-{plano} após filtros.")
-
-        if not dados_filtrados:
-            user_logger.error_user("Nenhum dado processado após a aplicação de todos os filtros.")
-            raise ProcessamentoError("Processamento de dados", "Nenhum dado resultou após a aplicação dos filtros de documento e data.")
-
-        user_logger.success_user("Processamento de dados concluído com sucesso.")
-        logger.info(f"Processamento concluído. {len(dados_filtrados)} combinações documento-plano geradas.")
-        return dados_filtrados
-
-    except Exception as e:
-        user_logger.error_user(f"Erro inesperado no processamento de dados: {str(e)}")
-        logger.error(f"Erro inesperado no processamento de dados: {str(e)}")
-        raise ProcessamentoError("Processamento de dados", str(e))
-
-
+    def identificar_dados_validos(
+        self,
+        dados_por_bloco: Dict[Tuple[str, str], pd.DataFrame],
+    ) -> Dict[str, any]:
+        """
+        Identifica quais combinações de documentos e datas possuem dados válidos (não zerados).
+        
+        Args:
+            dados_por_bloco: dicionário {(Documento, Plano): DataFrame}
+            
+        Returns:
+            dict: estrutura com documentos, datas e combinações que possuem dados válidos
+        """
+        documentos_validos = set()
+        datas_validas = set()
+        doc_planos_validos = []
+        planos_por_documento_validos = {}
+        datas_por_documento = {}
+        
+        for (doc, plano), df in dados_por_bloco.items():
+            if df.empty:
+                continue
+                
+            # Verifica se há registros com valor != 0
+            temp = df.copy()
+            temp["Valor"] = pd.to_numeric(temp["Valor"], errors="coerce")
+            temp = temp.dropna(subset=["Valor"])
+            temp = temp[temp["Valor"] != 0]
+            
+            if not temp.empty:
+                # Esta combinação tem dados válidos
+                doc_plano_chave = f"{doc}-{plano}"
+                documentos_validos.add(doc_plano_chave)
+                doc_planos_validos.append(doc_plano_chave)
+                
+                if doc_plano_chave not in planos_por_documento_validos:
+                    planos_por_documento_validos[doc_plano_chave] = set()
+                planos_por_documento_validos[doc_plano_chave].add(plano)
+                
+                # Normaliza datas e adiciona às válidas
+                temp["__date"] = pd.to_datetime(temp["Data Crédito"], errors="coerce", dayfirst=True)
+                datas_do_bloco = temp["__date"].dropna().dt.strftime("%d/%m/%Y").unique()
+                datas_validas.update(datas_do_bloco)
+                
+                # Armazena datas específicas para este documento-plano
+                datas_por_documento[doc_plano_chave] = sorted(list(datas_do_bloco))
+                
+                logger.info(f"Bloco {doc}-{plano} possui {len(temp)} registros válidos")
+            else:
+                logger.warning(f"Bloco {doc}-{plano} não possui dados válidos (todos zerados)")
+                # Adiciona entrada vazia para documentos sem dados válidos
+                doc_plano_chave = f"{doc}-{plano}"
+                datas_por_documento[doc_plano_chave] = []
+        
+        # Converte sets para listas ordenadas
+        planos_por_documento_final = {k: sorted(list(v)) for k, v in planos_por_documento_validos.items()}
+        
+        resultado = {
+            "documentos": sorted(list(documentos_validos)),
+            "planos_por_documento": planos_por_documento_final,
+            "datas": sorted(list(datas_validas)),
+            "datas_por_documento": datas_por_documento,
+            "doc_planos": sorted(doc_planos_validos)
+        }
+        
+        logger.info(f"Dados válidos identificados: {len(documentos_validos)} documentos, {len(datas_validas)} datas")
+        return resultado

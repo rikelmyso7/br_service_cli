@@ -1,166 +1,248 @@
-import argparse
-import json
-import os
-import sys
-from datetime import datetime
+
+"""
+main.py
+
+Ponto de entrada principal para o sistema BR Service.
+Orquestra a leitura, processamento, validação e geração de arquivos Excel.
+Lida com argumentos de linha de comando e comunicação via Standard I/O.
+"""
+
+import argparse, json, os, sys
+from pathlib import Path
 import pandas as pd
 
-from src.processamento.leitor import ler_dados_layout, obter_opcoes
-from src.processamento.processador import processar_dados
-from src.processamento.gerador import gerar_arquivos_saida
-from src.validacao.validador import ValidadorDados, JSONResponseBuilder, StatusProcessamento
-from src.utils.exceptions import (
-    ArquivoNaoEncontradoError, 
-    PlanilhaNaoEncontradaError, 
-    ColunaNaoEncontradaError,
-    DadosVaziosError,
-    ProcessamentoError,
-    ValidacaoError
-)
-from src.utils.logger import get_logger, get_user_logger
+ROOT = Path(__file__).resolve().parent
+SRC = ROOT / "src"
+if str(SRC) not in sys.path:
+    sys.path.insert(0, str(SRC))
 
-# Configurar loggers
-logger = get_logger()
-user_logger = get_user_logger()
-validador = ValidadorDados()
+from src.processamento.leitor import LeitorExcel
+from src.processamento.processador import Processador
+from src.processamento.gerador import Gerador
+from src.validacao.validador import Validador
+from src.utils.exceptions import BRServiceError, ErroValidacaoDados
+from src.utils.logger import configurar_logger, emit_event
+from src.config.configuracao import Configuracao
 
-class CustomJSONEncoder(json.JSONEncoder):
-    def default(self, obj):
-        if isinstance(obj, pd.Timestamp):
-            return obj.isoformat()
-        return super().default(obj)
+config_path = ROOT / 'config.json'
+config_app = Configuracao(caminho_config=str(config_path))
 
-def main():
-    parser = argparse.ArgumentParser(description="Processamento de dados financeiros para importação no Sienge.")
-    parser.add_argument("--input", required=True, help="Caminho para o arquivo Excel de entrada.")
-    parser.add_argument("--output", help="Pasta de destino para os arquivos gerados.")
-    parser.add_argument("--get-options", action="store_true", help="Retorna opções de documentos e datas em JSON.")
-    parser.add_argument("--documentos", help="Documentos selecionados, separados por vírgula.")
-    parser.add_argument("--data-inicio", help="Data de início para filtro (DD/MM/AAAA).")
-    parser.add_argument("--data-fim", help="Data de fim para filtro (DD/MM/AAAA).")
-    parser.add_argument("--extract-only", action="store_true", help="Extrai os dados e retorna em JSON sem gerar arquivos.")
+log_dir = ROOT / config_app.obter_config('diretorio_logs')
+log_dir.mkdir(parents=True, exist_ok=True)
+log_file = log_dir / f"br_service_{os.getpid()}.log"
 
-    args = parser.parse_args()
+# Logger será configurado depois de analisar argumentos para suporte ao --quiet
+logger = None
 
-    input_file = args.input
-    output_dir = args.output
+def configurar_logger_com_quiet(quiet_mode: bool):
+    """Configura o logger baseado no modo quiet."""
+    from src.utils.logger import configurar_logger
+    import logging
+    
+    if quiet_mode:
+        # Em modo quiet, redireciona console logs para stderr e reduz nível
+        logger_instance = logging.getLogger("br_service")
+        logger_instance.setLevel(config_app.obter_config('nivel_log'))
+        logger_instance.propagate = False
+        
+        # Remove handlers existentes para reconfigurar
+        for handler in logger_instance.handlers[:]:
+            logger_instance.removeHandler(handler)
+            
+        fmt = logging.Formatter(
+            "%(asctime)s | %(levelname)s | %(name)s | %(module)s:%(lineno)d | %(message)s"
+        )
+        
+        # Console handler vai para stderr
+        ch = logging.StreamHandler(sys.stderr)
+        ch.setLevel(config_app.obter_config('nivel_log'))
+        ch.setFormatter(fmt)
+        logger_instance.addHandler(ch)
+        
+        # File handler
+        fh = logging.FileHandler(str(log_file), encoding="utf-8")
+        fh.setLevel(config_app.obter_config('nivel_log'))
+        fh.setFormatter(fmt)
+        logger_instance.addHandler(fh)
+        
+        return logger_instance
+    else:
+        # Modo normal
+        return configurar_logger(caminho_log=str(log_file), nivel=config_app.obter_config('nivel_log'))
 
-    response_builder = JSONResponseBuilder()
-    response_builder.set_etapa("Inicialização")
+def obter_opcoes(caminho_arquivo: str):
+    """Lê o Excel e retorna opções de documentos, planos e datas já formatadas."""
+    leitor = LeitorExcel()
+    try:
+        # Usa o novo método que filtra apenas dados válidos
+        dados_validos = leitor.ler_e_validar_dados_validos(caminho_arquivo)
+
+        if not dados_validos.get("documentos"):
+            logger.warning("Nenhum dado válido encontrado na planilha Layout para extrair opções.")
+            print(json.dumps({"documentos": [], "planos_por_documento": {}, "datas": [], "dados_validos": dados_validos}, ensure_ascii=False))
+            return
+        
+        # Inclui a seção dados_validos no retorno (sem datas_por_documento)
+        opcoes_resposta = {
+            "documentos": dados_validos["documentos"],
+            "planos_por_documento": dados_validos["planos_por_documento"], 
+            "datas": dados_validos["datas"],
+            "dados_validos": dados_validos
+        }
+        
+        print(json.dumps(opcoes_resposta, ensure_ascii=False))
+        logger.info("Opções com dados válidos enviadas para a UI.")
+    except BRServiceError as e:
+        logger.error(f"Erro ao obter opções: {e.mensagem}")
+        print(json.dumps({"erro": e.mensagem}, ensure_ascii=False))
+    except Exception as e:
+        logger.critical(f"Erro inesperado ao obter opções: {e}")
+        print(json.dumps({"erro": f"Erro inesperado: {e}"}, ensure_ascii=False))
+
+def obter_datas(caminho_arquivo: str):
+    """Lê o Excel e retorna as datas separadas por cada documento-plano."""
+    leitor = LeitorExcel()
+    try:
+        # Usa o novo método que filtra apenas dados válidos
+        dados_validos = leitor.ler_e_validar_dados_validos(caminho_arquivo)
+
+        if not dados_validos.get("documentos"):
+            logger.warning("Nenhum dado válido encontrado na planilha Layout para extrair datas.")
+            print(json.dumps({"datas_por_documento": {}}, ensure_ascii=False))
+            return
+        
+        # Retorna apenas as datas por documento
+        datas_resposta = {
+            "datas_por_documento": dados_validos.get("datas_por_documento", {})
+        }
+        
+        print(json.dumps(datas_resposta, ensure_ascii=False))
+        logger.info("Datas por documento enviadas para a UI.")
+    except BRServiceError as e:
+        logger.error(f"Erro ao obter datas: {e.mensagem}")
+        print(json.dumps({"erro": e.mensagem}, ensure_ascii=False))
+    except Exception as e:
+        logger.critical(f"Erro inesperado ao obter datas: {e}")
+        print(json.dumps({"erro": f"Erro inesperado: {e}"}, ensure_ascii=False))
+
+def processar_e_gerar(caminho_arquivo: str, pasta_destino: str, documentos_selecionados=None, datas_selecionadas=None, nome_pasta: str | None = None, progress: bool = False):
+    """Processa e gera arquivos com base nas seleções."""
+    leitor = LeitorExcel()
+    processador = Processador()
+    gerador = Gerador()
+    validador = Validador()
 
     try:
-        # Validação inicial do arquivo de entrada
-        user_logger.progress_user("Validando arquivo de entrada...")
-        arquivo_valido, mensagens_arquivo = validador.validar_arquivo_entrada(input_file)
-        for msg in mensagens_arquivo:
-            if "❌" in msg:
-                user_logger.error_user(msg)
-            elif "⚠️" in msg:
-                user_logger.warning_user(msg)
-            else:
-                user_logger.info_user(msg)
+        if progress: emit_event("start", msg="Iniciando processamento", progress=0.0)
+        validador.validar_pasta_saida(pasta_destino)
 
-        if not arquivo_valido:
-            response_builder.set_status(StatusProcessamento.ERRO)
-            response_builder.add_erro(f"Arquivo de entrada inválido: {input_file}")
-            print(json.dumps(response_builder.build()))
-            sys.exit(1)
+        if progress: emit_event("read", msg="Lendo arquivo de entrada", progress=0.10)
+        dados_brutos_por_bloco, doc_planos_ui = leitor.ler_planilha_layout(caminho_arquivo)
+        if not dados_brutos_por_bloco:
+            raise ErroValidacaoDados("Nenhum dado válido encontrado no arquivo de entrada.")
+        
+        if progress: emit_event("parse", msg="Validando seleções", progress=0.25)
 
-        if args.get_options:
-            response_builder.set_etapa("Obtenção de Opções")
-            opcoes = obter_opcoes(input_file)
-            response_builder.set_status(StatusProcessamento.CONCLUIDO)
-            response_builder.add_dados("opcoes", opcoes)
-            response_builder.add_sucesso("Opções de documentos e datas retornadas com sucesso.")
-            print(json.dumps(response_builder.build()))
+        # Opções disponíveis para validar seleções
+        fmt = config_app.obter_config('formato_data_excel')
+        # Cria lista de documento-plano a partir das chaves dos dados processados
+        documentos_disponiveis = []
+        for (doc, plano) in dados_brutos_por_bloco.keys():
+            documentos_disponiveis.append(f"{doc}-{plano}")
+        documentos_disponiveis = sorted(documentos_disponiveis)
+        todas_datas = []
+        for df_bloco in dados_brutos_por_bloco.values():
+            s = pd.to_datetime(df_bloco["Data Crédito"], errors="coerce", dayfirst=True).dropna().dt.strftime(fmt)
+            todas_datas.extend(s.tolist())
+        datas_disponiveis = sorted(set(todas_datas))
 
-        else:
-            # Validação e criação da pasta de destino
-            if not args.extract_only and not output_dir:
-                response_builder.set_status(StatusProcessamento.ERRO)
-                response_builder.add_erro("A pasta de destino é obrigatória para o processamento.")
-                print(json.dumps(response_builder.build()))
-                sys.exit(1)
+        if progress: emit_event("validate", msg="Validando seleções", progress=0.35)
+        validador.validar_selecoes(
+            documentos_disponiveis,
+            datas_disponiveis,
+            documentos_selecionados or [],
+            datas_selecionadas or []
+        )
 
-            if output_dir:
-                user_logger.progress_user("Validando pasta de destino...")
-                pasta_valida, mensagens_pasta = validador.validar_selecao_usuario([], None, None, output_dir)
-                for msg in mensagens_pasta:
-                    if "❌" in msg:
-                        user_logger.error_user(msg)
-                    elif "⚠️" in msg:
-                        user_logger.warning_user(msg)
-                    else:
-                        user_logger.info_user(msg)
-                
-                if not pasta_valida:
-                    response_builder.set_status(StatusProcessamento.ERRO)
-                    response_builder.add_erro(f"Pasta de destino inválida ou não pôde ser criada: {output_dir}")
-                    print(json.dumps(response_builder.build()))
-                    sys.exit(1)
-            response_builder.set_etapa("Processamento de Dados")
-            documentos_selecionados = args.documentos.split(",") if args.documentos else []
-            
-            data_inicio = None
-            if args.data_inicio:
-                try:
-                    data_inicio = datetime.strptime(args.data_inicio, "%d/%m/%Y")
-                except ValueError:
-                    user_logger.error_user(f"Formato de data de início inválido: {args.data_inicio}. Use DD/MM/AAAA.")
-                    raise ValidacaoError("Data de Início", "Formato inválido")
+        if progress: emit_event("process", msg="Processando dados", progress=0.55)
+        dados_processados_filtrados = processador.processar_dados(
+            dados_brutos_por_bloco,
+            documentos_selecionados,
+            datas_selecionadas
+        )
 
-            data_fim = None
-            if args.data_fim:
-                try:
-                    data_fim = datetime.strptime(args.data_fim, "%d/%m/%Y")
-                except ValueError:
-                    user_logger.error_user(f"Formato de data de fim inválido: {args.data_fim}. Use DD/MM/AAAA.")
-                    raise ValidacaoError("Data de Fim", "Formato inválido")
+        validador.validar_dados_processados(dados_processados_filtrados)
 
-            df_dados, documentos_planos = ler_dados_layout(input_file)
+        
+        def _progress_generate_cb(idx: int, total: int, path: str):
+            base, top = 0.70, 0.95
+            prog = base + (top - base) * (idx / max(1, total))
+            emit_event("generate", msg=f"Gerado {Path(path).name}", progress=prog, file=path)
 
-            dados_processados = processar_dados(df_dados, documentos_selecionados, data_inicio, data_fim)
+        if progress: emit_event("generate", msg="Iniciando geração", progress=0.70)
 
-            if args.extract_only:
-                response_builder.set_etapa("Extração de Dados")
-                response_builder.set_status(StatusProcessamento.CONCLUIDO)
-                # Converter DataFrames para um formato serializável em JSON
-                dados_serializaveis = {
-                    chave: df.to_dict(orient='records') 
-                    for chave, df in dados_processados.items()
-                }
-                response_builder.add_dados("dados_extraidos", dados_serializaveis)
-                response_builder.add_sucesso("Dados extraídos com sucesso.")
-                print(json.dumps(response_builder.build(), indent=4, cls=CustomJSONEncoder))
-            else:
-                arquivos_gerados = gerar_arquivos_saida(dados_processados, output_dir)
-                
-                response_builder.set_etapa("Finalização")
-                if arquivos_gerados:
-                    response_builder.set_status(StatusProcessamento.CONCLUIDO)
-                    response_builder.add_sucesso(f"Processamento concluído com sucesso! {len(arquivos_gerados)} arquivo(s) gerado(s).")
-                    response_builder.add_dados("arquivos_gerados", arquivos_gerados)
-                else:
-                    response_builder.set_status(StatusProcessamento.AVISO)
-                    response_builder.add_aviso("Nenhum arquivo foi gerado.")
-                
-                print(json.dumps(response_builder.build()))
+        arquivos = gerador.gerar_arquivos_saida(
+            dados_processados_filtrados,
+            pasta_destino,
+            nome_pasta=nome_pasta,
+            progress_cb=_progress_generate_cb if progress else None,
+        )
 
-    except (ArquivoNaoEncontradoError, PlanilhaNaoEncontradaError, ColunaNaoEncontradaError, DadosVaziosError, ProcessamentoError, ValidacaoError) as e:
-        response_builder.set_status(StatusProcessamento.ERRO)
-        response_builder.add_erro(f"Erro no processamento: {e.message}")
-        logger.error(f"Erro específico: {e.__class__.__name__} - {e.message}")
-        print(json.dumps(response_builder.build()))
+        if progress: emit_event("done", msg="Concluído", progress=1.0, files=len(arquivos))
+        logger.info("Processamento e geração concluídos.")
+        if not progress:
+            print(json.dumps({"sucesso": "Arquivos gerados com sucesso!"}, ensure_ascii=False))
+
+    except BRServiceError as e:
+        if progress: emit_event("ERROR", msg=e.mensagem or "Erro")
+        logger.error(...)
+        print(json.dumps({"codigo": e.codigo, "mensagem": e.mensagem, "detalhes": e.detalhes}, ensure_ascii=False))
         sys.exit(1)
+
     except Exception as e:
-        response_builder.set_status(StatusProcessamento.ERRO)
-        response_builder.add_erro(f"Erro inesperado: {str(e)}")
-        logger.critical(f"Erro inesperado e crítico: {str(e)}", exc_info=True)
-        print(json.dumps(response_builder.build()))
+        if progress: emit_event("ERROR", msg=str(e))
+        logger.critical(...)
+        print(json.dumps({"erro": f"Erro inesperado: {e}"}, ensure_ascii=False))
         sys.exit(1)
 
+
+def main():
+    parser = argparse.ArgumentParser(description="Sistema BR Service para processamento de arquivos Excel.")
+    parser.add_argument("--input", required=True, help="Caminho do Excel de entrada.")
+    parser.add_argument("--output", help="Pasta de destino dos arquivos gerados.")
+    parser.add_argument("--get-options", action="store_true", help="Mostra documentos/planos/datas disponíveis.")
+    parser.add_argument("--get-datas", action="store_true", help="Mostra datas separadas por cada documento-plano.")
+    parser.add_argument("--documentos", help="Ex: AZ,REG")
+    parser.add_argument("--datas", help="Ex: 05/05/2025,27/05/2025")
+    parser.add_argument("--nome-pasta", help="Nome da pasta que será criada para os arquivos gerados")
+    parser.add_argument("--progress", action="store_true", help="Emite eventos NDJSON de progresso no stdout")
+    parser.add_argument("--quiet", action="store_true", help="Suprime logs no console quando usado com --get-options (logs vão apenas para arquivo)")
+
+    args = parser.parse_args()
+    
+    # Configura o logger baseado nos argumentos
+    global logger
+    quiet_mode = args.quiet and (args.get_options or args.get_datas)
+    logger = configurar_logger_com_quiet(quiet_mode)
+    
+    input_path = args.input.strip('"') if args.input else None
+    output_path = args.output.strip('"') if args.output else None
+
+    documentos_selecionados = args.documentos.split(",") if args.documentos else None
+    datas_selecionadas = args.datas.split(",") if args.datas else None
+
+    # Se o usuário não passar --nome-pasta, usa o nome do arquivo de entrada (sem extensão)
+    nome_pasta = args.nome_pasta or Path(args.input).stem
+
+    if args.get_options:
+        obter_opcoes(input_path)
+    elif args.get_datas:
+        obter_datas(input_path)
+    else:
+        if not output_path:
+            print(json.dumps({"erro":"Parâmetro --output é obrigatório para gerar arquivos."}, ensure_ascii=False))
+            sys.exit(2)
+        processar_e_gerar(input_path, output_path, documentos_selecionados, datas_selecionadas, nome_pasta, progress=args.progress)
 
 if __name__ == "__main__":
     main()
-
-
