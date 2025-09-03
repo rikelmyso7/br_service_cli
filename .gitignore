@@ -4,4 +4,9 @@
 /output
 /logs
 *.spec
-**/__pycache__/
+*/__pycache__/
+.pyc
+.env
+.mypy_cache/
+.pytest_cache/
+*.cpython-*

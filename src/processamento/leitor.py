@@ -94,22 +94,47 @@ class LeitorExcel:
         self.sheet_name = sheet_name
         self.meta_rows_up = meta_rows_up
         self.cols_alvo = ["Contrato", "Valor", "Data Crédito"]
+        
+        # Mapeamento flexível para variações de nomes de colunas
+        self.variacoes_colunas = {
+            "Contrato": [
+                "contrato", "contrat", "contract"
+            ],
+            "Valor": [
+                "valor", "val", "value", "montante"
+            ],
+            "Data Crédito": [
+                "data credito", "data crédito", "dt credito", "dt crédito",
+                "data", "dt", "date"
+            ]
+        }
 
     def _encontrar_linha_cabecalho(self, df: pd.DataFrame) -> int:
         """
         Localiza o índice (0-based) da linha de cabeçalho.
         
         A detecção é feita buscando, em uma mesma linha, a ocorrência
-        das três colunas-alvo: 'Contrato', 'Valor', 'Data Crédito'.
+        das três colunas-alvo: 'Contrato', 'Valor', 'Data Crédito' ou suas variações.
 
         Raises:
             ErroLeituraArquivo: Se o cabeçalho não for encontrado.
         """
         for i, row in df.iterrows():
-            vals = [str(x) for x in row.values]
-            if all(any(re.search(col, v, re.IGNORECASE) for v in vals) for col in self.cols_alvo):
+            vals = [str(x).strip().lower() for x in row.values if pd.notna(x)]
+            
+            colunas_encontradas = []
+            for col_alvo in self.cols_alvo:
+                # Verifica se encontrou a coluna alvo ou alguma de suas variações
+                for variacao in self.variacoes_colunas[col_alvo]:
+                    if any(variacao in val for val in vals):
+                        colunas_encontradas.append(col_alvo)
+                        break
+            
+            # Se encontrou todas as 3 colunas obrigatórias na mesma linha
+            if len(colunas_encontradas) == len(self.cols_alvo):
                 return i
-        raise ErroLeituraArquivo("Cabeçalho com 'Contrato', 'Valor' e 'Data Crédito' não encontrado na planilha.")
+                
+        raise ErroLeituraArquivo("Cabeçalho com 'Contrato', 'Valor' e 'Data Crédito' (ou variações) não encontrado na planilha.")
 
     def _indices_inicio_blocos(self, df: pd.DataFrame, linha_cabecalho: int) -> list[int]:
         """
@@ -120,10 +145,18 @@ class LeitorExcel:
             linha_cabecalho (int): Índice da linha de cabeçalho.
         
         Returns:
-            list[int]: Lista de índices de colunas onde aparece 'Contrato'.
+            list[int]: Lista de índices de colunas onde aparece 'Contrato' ou variações.
         """
         header = df.iloc[linha_cabecalho].fillna("")
-        return [j for j, v in enumerate(header) if str(v).strip().lower() == "contrato"]
+        indices = []
+        for j, v in enumerate(header):
+            val = str(v).strip().lower()
+            # Verifica se é uma das variações de "Contrato"
+            for variacao in self.variacoes_colunas["Contrato"]:
+                if variacao in val:
+                    indices.append(j)
+                    break
+        return indices
 
     def _extrair_metadados(self, df: pd.DataFrame, linha_cabecalho: int, col_ini: int) -> tuple[str|None, str|None]:
         """
@@ -157,7 +190,7 @@ class LeitorExcel:
         Extrai e trata um bloco de dados a partir de seu índice inicial de coluna.
         
         Processos:
-        - Valida sequência de colunas ('Contrato', 'Valor', 'Data Crédito').
+        - Valida sequência de colunas ('Contrato', 'Valor', 'Data Crédito') ou variações.
         - Remove recabeçalhos e linhas vazias.
         - Converte 'Valor' para float, tratando formato brasileiro.
         - Converte 'Data Crédito' para datetime.
@@ -176,14 +209,26 @@ class LeitorExcel:
             v2 = str(df.iat[linha_cabecalho, col_ini+2]).strip().lower()
         except Exception:
             return None
-        if v1 != "valor" or v2 != "data crédito":
+        
+        # Verifica se v1 é uma variação de "Valor"
+        valor_encontrado = any(variacao in v1 for variacao in self.variacoes_colunas["Valor"])
+        
+        # Verifica se v2 é uma variação de "Data Crédito"  
+        data_encontrada = any(variacao in v2 for variacao in self.variacoes_colunas["Data Crédito"])
+        
+        if not valor_encontrado or not data_encontrada:
             return None
 
         sub = df.iloc[linha_cabecalho+1:, col_ini:col_ini+3].copy()
         sub.columns = self.cols_alvo
 
-        # Remove recabeçalhos e linhas vazias
-        sub = sub[~(sub["Contrato"].astype(str).str.strip().str.lower() == "contrato")]
+        # Remove recabeçalhos e linhas vazias usando variações de "Contrato"
+        mask_recabecalho = pd.Series([False] * len(sub), index=sub.index)
+        for variacao in self.variacoes_colunas["Contrato"]:
+            mask_variacao = sub["Contrato"].astype(str).str.strip().str.lower().str.contains(variacao, na=False)
+            mask_recabecalho = mask_recabecalho | mask_variacao
+        
+        sub = sub[~mask_recabecalho]
         sub = sub.dropna(how="all")
 
         # Trata Valor
