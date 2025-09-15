@@ -7,3 +7,4 @@ xlsxwriter>=3.2
 click>=8.1
 pydantic-settings>=2.1
 platformdirs>=4
+xlwings>=0.33.15

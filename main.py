@@ -10,6 +10,8 @@ Lida com argumentos de linha de comando e comunicação via Standard I/O.
 import argparse, json, os, sys
 from pathlib import Path
 import pandas as pd
+import xlwings as xw
+from shutil import copyfile
 
 ROOT = Path(__file__).resolve().parent
 SRC = ROOT / "src"
@@ -217,6 +219,8 @@ def main():
     parser.add_argument("--nome-pasta", help="Nome da pasta que será criada para os arquivos gerados")
     parser.add_argument("--progress", action="store_true", help="Emite eventos NDJSON de progresso no stdout")
     parser.add_argument("--quiet", action="store_true", help="Suprime logs no console quando usado com --get-options (logs vão apenas para arquivo)")
+    parser.add_argument("--conta", type=int, help="Atualiza a conta na planilha Layout")
+    parser.add_argument("--get-contas", action="store_true", help="Analisa contas e retorna JSON com contas ativas e inativas")
 
     args = parser.parse_args()
     
@@ -238,6 +242,22 @@ def main():
         obter_opcoes(input_path)
     elif args.get_datas:
         obter_datas(input_path)
+    elif args.conta:
+        try:
+            processador = Processador()
+            processador.atualizar_conta(input_path, args.conta)
+            print(json.dumps({"sucesso": f"Conta atualizada para {args.conta}"}, ensure_ascii=False))
+        except Exception as e:
+            print(json.dumps({"erro": f"Erro ao atualizar conta: {e}"}, ensure_ascii=False))
+            sys.exit(1)
+    elif args.get_contas:
+        try:
+            processador = Processador()
+            result = processador.analisar_contas(input_path)
+            print(result)
+        except Exception as e:
+            print(json.dumps({"erro": f"Erro ao analisar contas: {e}"}, ensure_ascii=False))
+            sys.exit(1)
     else:
         if not output_path:
             print(json.dumps({"erro":"Parâmetro --output é obrigatório para gerar arquivos."}, ensure_ascii=False))

@@ -1,6 +1,6 @@
 # BR SERVICE
 
-Sistema Python para **processamento de arquivos Excel**, voltado à extração, transformação e geração de dados financeiros para importação em sistemas externos como o **Sienge**.  
+Sistema Python para **processamento de arquivos Excel**, voltado à extração, transformação e geração de dados financeiros para importação em sistemas externos como o **Sienge**.
 Desenvolvido com arquitetura modular, robusta e integrável a uma **UI Flutter** via **Standard I/O**.
 
 ## 🚀 Funcionalidades
@@ -53,17 +53,21 @@ BR_SERVICE/
 ## 🛠️ Descrição dos Módulos
 
 ### `src/processamento/`
+
 - **`leitor.py`** – Lê o Excel e divide os dados em blocos por `(Documento, Plano Financeiro)`.
 - **`processador.py`** – Aplica filtros de seleção, intervalos de datas e normaliza formatos.
 - **`gerador.py`** – Cria arquivos `.xlsx` de saída, formata colunas, congela cabeçalho e organiza pastas.
 
 ### `src/validacao/`
+
 - **`validador.py`** – Valida arquivos, pastas, seleções e dados processados.
 
 ### `src/config/`
+
 - **`configuracao.py`** – Lê/salva configurações em JSON; expande variáveis de ambiente; permite override via `BR_SERVICE_*`.
 
 ### `src/utils/`
+
 - **`exceptions.py`** – Exceções com códigos (`LEITURA_ARQUIVO`, `PROCESSAMENTO_DADOS`, etc.) e suporte a serialização para JSON.
 - **`logger.py`** – Logger idempotente com suporte a console e arquivo rotativo.
 
@@ -100,10 +104,13 @@ pip install -r requirements.txt
 ```
 
 ### Obter opções de documentos/datas
+
 ```bash
 python main.py --input caminho/arquivo.xlsx --get-options
 ```
+
 Saída (JSON):
+
 ```json
 {
   "documentos": ["AZ", "REG"],
@@ -116,6 +123,7 @@ Saída (JSON):
 ```
 
 ### Processar e gerar arquivos
+
 ```bash
 python main.py   --input caminho/arquivo.xlsx   --output pasta/saida   --documentos AZ,REG   --datas 05/05/2025,27/05/2025
 ```
@@ -125,27 +133,13 @@ python main.py   --input caminho/arquivo.xlsx   --output pasta/saida   --documen
 ## 🧪 Testes
 
 Os testes ficam em `tests/` e cobrem:
+
 - Leitura de arquivos com espaçadores entre blocos.
 - Filtros por datas em diferentes formatos.
 - Geração de arquivos `.xlsx` e validação de colunas/formatos.
 
 Execute:
+
 ```bash
 pytest
 ```
-
----
-
-## 🤝 Contribuindo
-
-1. Fork o repositório
-2. Crie sua branch (`git checkout -b feature/nova-funcionalidade`)
-3. Commit suas alterações (`git commit -m 'Descrição'`)
-4. Push para a branch (`git push origin feature/nova-funcionalidade`)
-5. Abra um Pull Request
-
----
-
-## 📜 Licença
-
-(Defina aqui a licença, ex.: MIT, Apache 2.0, etc.)

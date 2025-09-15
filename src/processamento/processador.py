@@ -3,6 +3,8 @@ from __future__ import annotations
 from typing import Iterable, Dict, Tuple
 import pandas as pd
 from datetime import datetime
+import xlwings as xw
+import json
 
 from utils.logger import configurar_logger
 
@@ -184,3 +186,95 @@ class Processador:
         
         logger.info(f"Dados válidos identificados: {len(documentos_validos)} documentos, {len(datas_validas)} datas")
         return resultado
+
+    def atualizar_conta(self, caminho_arquivo: str, nova_conta: int):
+        """Atualiza a conta na célula B1 da planilha Layout do arquivo Excel."""
+        try:
+            logger.info(f"Atualizando conta para {nova_conta} no arquivo {caminho_arquivo}")
+            
+            with xw.App(visible=False) as app:
+                app.display_alerts = False
+                wb = app.books.open(caminho_arquivo, update_links=False, read_only=False)
+                sht = wb.sheets["Layout"]
+                sht.range("B1").value = str(nova_conta)
+
+                try:
+                    wb.api.RefreshAll()
+                except Exception:
+                    pass
+                app.calculate()
+
+                wb.save()
+                wb.close()
+            
+            logger.info(f"Conta atualizada com sucesso para {nova_conta}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Erro ao atualizar conta: {e}")
+            raise
+
+    def analisar_contas(self, file_path: str) -> dict:
+        """
+        Lê o Excel, cruza os números de conta da aba 'Resumo por Conta' com os nomes de planilhas
+        e verifica quais planilhas possuem valores numéricos.
+
+        Retorna um JSON no formato:
+        {
+            "contas_ativas": { "numero_conta": "nome_planilha", ... },
+            "contas_inativas": { "numero_conta": "nome_planilha", ... }
+        }
+        """
+        # Carregar todas as abas
+        xls = pd.ExcelFile(file_path)
+
+        # 1. Obter os números ao lado de "Conta" na aba Resumo por Conta
+        df_resumo = pd.read_excel(file_path, sheet_name="Resumo por Conta", header=None)
+        account_numbers = []
+        for row in range(df_resumo.shape[0]):
+            for col in range(df_resumo.shape[1] - 1):
+                value = df_resumo.iat[row, col]
+                if isinstance(value, str) and value.strip().lower() == "conta":
+                    right_value = df_resumo.iat[row, col + 1]
+                    if pd.notna(right_value):
+                        account_numbers.append(str(int(right_value)))
+
+        # 2. Mapear contas para suas planilhas correspondentes
+        contas_map = {}
+        for acc in account_numbers:
+            for sheet in xls.sheet_names:
+                if sheet.startswith(acc + "-"):
+                    contas_map[acc] = sheet
+
+        # 3. Verificar quais planilhas têm valores numéricos (dados reais, não apenas cabeçalhos)
+        contas_ativas = {}
+        contas_inativas = {}
+        for acc, sheet in contas_map.items():
+            try:
+                df = pd.read_excel(file_path, sheet_name=sheet, header=None)
+
+                # Verificar se há dados além da primeira linha (cabeçalhos)
+                has_data_rows = len(df) > 2
+
+                # Se há mais de uma linha, verificar se existe pelo menos um valor numérico nas linhas de dados
+                if has_data_rows:
+                    # Pegar apenas as linhas de dados (excluindo a primeira linha que são cabeçalhos)
+                    data_rows = df.iloc[2:]
+                    has_numeric = data_rows.map(lambda x: isinstance(x, (int, float)) and not pd.isna(x)).any().any()
+                else:
+                    has_numeric = False
+
+                if has_numeric:
+                    contas_ativas[acc] = sheet
+                else:
+                    contas_inativas[acc] = sheet
+            except Exception:
+                contas_inativas[acc] = sheet
+
+        # 4. Retornar no formato JSON
+        result = {
+            "contas_ativas": contas_ativas,
+            "contas_inativas": contas_inativas
+        }
+
+        return json.dumps(result, indent=4, ensure_ascii=False)
