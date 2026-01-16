@@ -23,7 +23,7 @@ DEFAULTS: Dict[str, Any] = {
     "diretorio_logs": "logs",
     "nivel_log": "INFO",
     "formato_data_excel": "%d/%m/%Y",
-    "colunas_saida": ["Contrato", "Valor", "Emissão", "Vencimento", "Competência"],
+    "colunas_saida": ["Contrato", "Valor", "Data de Emissão", "Data de Vencimento", "Data de Competência"],
 }
 
 

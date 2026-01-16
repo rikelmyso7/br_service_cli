@@ -32,7 +32,7 @@ class Gerador:
     Gera arquivos Excel de saída a partir dos DataFrames processados por bloco.
     
     Recursos:
-    - Garante a presença de colunas de data esperadas (Emissão, Vencimento, Competência).
+    - Garante a presença de colunas de data esperadas (Data de Emissão, Data de Vencimento, Data de Competência).
     - Aplica formatação de data e número no Excel.
     - Cria pastas por documento e versiona arquivo se já existir.
     """
@@ -46,9 +46,9 @@ class Gerador:
         self.colunas_saida = colunas_saida or [
             "Contrato",
             "Valor",
-            "Emissão",
-            "Vencimento",
-            "Competência",
+            "Data de Emissão",
+            "Data de Vencimento",
+            "Data de Competência",
         ]
 
 
@@ -78,12 +78,12 @@ class Gerador:
             df_out = df.copy()
 
             # Garante colunas de data derivadas de 'Data Crédito' se não existirem
-            for col in ("Emissão", "Vencimento", "Competência"):
+            for col in ("Data de Emissão", "Data de Vencimento", "Data de Competência"):
                 if col not in df_out.columns:
                     df_out[col] = df_out.get("Data Crédito")
-            
+
             # Converte colunas de data para datetime (mantém como datetime para Excel)
-            for col in ("Emissão", "Vencimento", "Competência"):
+            for col in ("Data de Emissão", "Data de Vencimento", "Data de Competência"):
                 if col in df_out.columns:
                     df_out[col] = pd.to_datetime(df_out[col], errors="coerce")
 
@@ -123,7 +123,7 @@ class Gerador:
             date_style.num_format_str = 'dd/mm/YYYY'
             
             # Definir colunas de data
-            date_columns = {"Emissão", "Vencimento", "Competência"}
+            date_columns = {"Data de Emissão", "Data de Vencimento", "Data de Competência"}
             
             # Escrever cabeçalhos
             for col_idx, col_name in enumerate(df_out.columns):
@@ -199,12 +199,12 @@ class Gerador:
             df_out = df.copy()
             
             # Garante colunas de data derivadas de 'Data Crédito' se não existirem
-            for col in ("Emissão", "Vencimento", "Competência"):
+            for col in ("Data de Emissão", "Data de Vencimento", "Data de Competência"):
                 if col not in df_out.columns:
                     df_out[col] = df_out.get("Data Crédito")
-            
+
             # Converte colunas de data para formato MM/DD/YYYY (string para CSV)
-            for col in ("Emissão", "Vencimento", "Competência"):
+            for col in ("Data de Emissão", "Data de Vencimento", "Data de Competência"):
                 if col in df_out.columns:
                     df_out[col] = pd.to_datetime(df_out[col], errors="coerce").dt.strftime("%d/%m/%Y")
             

@@ -10,3 +10,4 @@
 .mypy_cache/
 .pytest_cache/
 *.cpython-*
+/outputs
