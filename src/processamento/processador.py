@@ -37,6 +37,8 @@ class Processador:
         """
         Aplica filtros opcionais e devolve novos DataFrames por bloco.
 
+        OTIMIZAÇÃO: Usa máscaras booleanas em vez de múltiplas cópias de DataFrame.
+
         Args:
             dados_por_bloco: dicionário {(Documento, Plano): DataFrame}
             documentos_selecionados: filtra por documentos (exatos).
@@ -72,42 +74,49 @@ class Processador:
             if planos_sel and plano not in planos_sel:
                 continue
 
-            temp = df.copy()
-
             # Garante colunas essenciais
             obrig = ["Contrato", "Valor", "Data Crédito"]
-            falt = [c for c in obrig if c not in temp.columns]
+            falt = [c for c in obrig if c not in df.columns]
             if falt:
                 logger.warning(f"Bloco {(doc, plano)} sem colunas obrigatórias: {falt}. Ignorando.")
                 continue
 
-            # Normaliza datas para date
-            temp["__date"] = _to_date_series(temp["Data Crédito"])
+            # OTIMIZAÇÃO: Usa máscaras booleanas em vez de múltiplas cópias
+            # Converte datas uma única vez
+            date_series = _to_date_series(df["Data Crédito"])
 
-            # Filtros de datas
+            # Constrói máscara combinada
+            mask = pd.Series(True, index=df.index)
+
             if datas_sel:
-                temp = temp[temp["__date"].isin(datas_sel)]
+                mask &= date_series.isin(datas_sel)
             if di:
-                temp = temp[temp["__date"] >= di]
+                mask &= date_series >= di
             if df_:
-                temp = temp[temp["__date"] <= df_]
+                mask &= date_series <= df_
 
-            if temp.empty:
+            # Converte valor para numérico
+            valor_numerico = pd.to_numeric(df["Valor"], errors="coerce")
+
+            # Adiciona filtros de valor à máscara
+            mask &= valor_numerico.notna() & (valor_numerico != 0)
+
+            # Loga contratos zerados
+            zerados_mask = (valor_numerico == 0)
+            if zerados_mask.any():
+                contratos_zero = df.loc[zerados_mask, "Contrato"].dropna().astype(str).tolist()
+                if contratos_zero:
+                    logger.warning(
+                        f"Bloco {(doc, plano)} possui contratos com valor zerado: {', '.join(contratos_zero)}. Ignorando essas linhas."
+                    )
+
+            # Aplica máscara e cria cópia APENAS no final
+            if not mask.any():
                 continue
 
-            # Valor numérico com 2 casas
-            temp["Valor"] = pd.to_numeric(temp["Valor"], errors="coerce")
-
-            # Identifica e loga contratos com valor zerado
-            df_zerado = temp[temp["Valor"] == 0]
-            if not df_zerado.empty:
-                contratos_zero = df_zerado["Contrato"].dropna().astype(str).tolist()
-                logger.warning(
-                    f"Bloco {(doc, plano)} possui contratos com valor zerado: {', '.join(contratos_zero)}. Ignorando essas linhas."
-                )
-                temp = temp[temp["Valor"].notna() & (temp["Valor"] != 0)]
-
-            temp = temp.dropna(subset=["Valor"])
+            temp = df.loc[mask].copy()
+            temp["__date"] = date_series.loc[mask]
+            temp["Valor"] = valor_numerico.loc[mask]
 
             # Ordenação previsível
             temp = temp.sort_values(["__date", "Contrato"]).drop(columns="__date")
@@ -125,10 +134,12 @@ class Processador:
     ) -> Dict[str, any]:
         """
         Identifica quais combinações de documentos e datas possuem dados válidos (não zerados).
-        
+
+        OTIMIZAÇÃO: Usa máscaras booleanas em vez de cópias de DataFrame.
+
         Args:
             dados_por_bloco: dicionário {(Documento, Plano): DataFrame}
-            
+
         Returns:
             dict: estrutura com documentos, datas e combinações que possuem dados válidos
         """
@@ -137,45 +148,45 @@ class Processador:
         doc_planos_validos = []
         planos_por_documento_validos = {}
         datas_por_documento = {}
-        
+
         for (doc, plano), df in dados_por_bloco.items():
             if df.empty:
                 continue
-                
-            # Verifica se há registros com valor != 0
-            temp = df.copy()
-            temp["Valor"] = pd.to_numeric(temp["Valor"], errors="coerce")
-            temp = temp.dropna(subset=["Valor"])
-            temp = temp[temp["Valor"] != 0]
-            
-            if not temp.empty:
+
+            # OTIMIZAÇÃO: Usa máscara booleana em vez de cópia
+            valor_numerico = pd.to_numeric(df["Valor"], errors="coerce")
+            mask_valido = valor_numerico.notna() & (valor_numerico != 0)
+
+            n_validos = mask_valido.sum()
+
+            if n_validos > 0:
                 # Esta combinação tem dados válidos
                 doc_plano_chave = f"{doc}-{plano}"
                 documentos_validos.add(doc_plano_chave)
                 doc_planos_validos.append(doc_plano_chave)
-                
+
                 if doc_plano_chave not in planos_por_documento_validos:
                     planos_por_documento_validos[doc_plano_chave] = set()
                 planos_por_documento_validos[doc_plano_chave].add(plano)
-                
-                # Normaliza datas e adiciona às válidas
-                temp["__date"] = pd.to_datetime(temp["Data Crédito"], errors="coerce", dayfirst=True)
-                datas_do_bloco = temp["__date"].dropna().dt.strftime("%d/%m/%Y").unique()
+
+                # Normaliza datas e adiciona às válidas (usando máscara)
+                datas_series = pd.to_datetime(df.loc[mask_valido, "Data Crédito"], errors="coerce", dayfirst=True)
+                datas_do_bloco = datas_series.dropna().dt.strftime("%d/%m/%Y").unique()
                 datas_validas.update(datas_do_bloco)
-                
+
                 # Armazena datas específicas para este documento-plano
                 datas_por_documento[doc_plano_chave] = sorted(list(datas_do_bloco))
-                
-                logger.info(f"Bloco {doc}-{plano} possui {len(temp)} registros válidos")
+
+                logger.info(f"Bloco {doc}-{plano} possui {n_validos} registros válidos")
             else:
                 logger.warning(f"Bloco {doc}-{plano} não possui dados válidos (todos zerados)")
                 # Adiciona entrada vazia para documentos sem dados válidos
                 doc_plano_chave = f"{doc}-{plano}"
                 datas_por_documento[doc_plano_chave] = []
-        
+
         # Converte sets para listas ordenadas
         planos_por_documento_final = {k: sorted(list(v)) for k, v in planos_por_documento_validos.items()}
-        
+
         resultado = {
             "documentos": sorted(list(documentos_validos)),
             "planos_por_documento": planos_por_documento_final,
@@ -183,7 +194,7 @@ class Processador:
             "datas_por_documento": datas_por_documento,
             "doc_planos": sorted(doc_planos_validos)
         }
-        
+
         logger.info(f"Dados válidos identificados: {len(documentos_validos)} documentos, {len(datas_validas)} datas")
         return resultado
 

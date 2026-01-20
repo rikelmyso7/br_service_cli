@@ -7,6 +7,7 @@ from typing import Callable, Optional
 from datetime import datetime
 
 from utils.logger import configurar_logger
+from utils.exceptions import BRServiceError
 
 logger = configurar_logger(__name__)
 
@@ -75,16 +76,20 @@ class Gerador:
                 logger.warning(f"Sem linhas para {doc}-{plano}. Pulando geração.")
                 continue
 
-            df_out = df.copy()
+            # Seleciona apenas colunas necessárias para reduzir memória
+            colunas_necessarias = [c for c in df.columns if c in self.colunas_saida or c == "Data Crédito"]
+            df_out = df[colunas_necessarias].copy()
 
             # Garante colunas de data derivadas de 'Data Crédito' se não existirem
+            # Nota: Data Crédito já é datetime (convertido em leitor.py)
+            data_credito = df_out.get("Data Crédito")
             for col in ("Data de Emissão", "Data de Vencimento", "Data de Competência"):
                 if col not in df_out.columns:
-                    df_out[col] = df_out.get("Data Crédito")
+                    df_out[col] = data_credito
 
-            # Converte colunas de data para datetime (mantém como datetime para Excel)
+            # Converte colunas de data apenas se não forem datetime
             for col in ("Data de Emissão", "Data de Vencimento", "Data de Competência"):
-                if col in df_out.columns:
+                if col in df_out.columns and not pd.api.types.is_datetime64_any_dtype(df_out[col]):
                     df_out[col] = pd.to_datetime(df_out[col], errors="coerce")
 
             # Garante todas as colunas de saída
@@ -124,34 +129,29 @@ class Gerador:
             
             # Definir colunas de data
             date_columns = {"Data de Emissão", "Data de Vencimento", "Data de Competência"}
-            
+
+            # OTIMIZAÇÃO: Pré-converter datas para números seriais do Excel
+            # Isso evita conversões repetidas dentro do loop célula-a-célula
+            for col in date_columns:
+                if col in df_out.columns:
+                    df_out[col] = df_out[col].apply(
+                        lambda x: _datetime_to_excel_serial(x) if pd.notna(x) else ""
+                    )
+
+            # Mapeia índices das colunas de data para aplicar estilo correto
+            date_col_indices = {i for i, col in enumerate(df_out.columns) if col in date_columns}
+
             # Escrever cabeçalhos
             for col_idx, col_name in enumerate(df_out.columns):
                 worksheet.write(0, col_idx, col_name)
-            
-            # Escrever dados com formatação apropriada
+
+            # Escrever dados - loop simplificado sem conversões internas
             for row_idx, row in enumerate(df_out.itertuples(index=False), start=1):
                 for col_idx, value in enumerate(row):
-                    col_name = df_out.columns[col_idx]
-                    
-                    if pd.isna(value):
+                    if pd.isna(value) or value == "":
                         worksheet.write(row_idx, col_idx, "")
-                    elif col_name in date_columns and pd.notna(value):
-                        # Converter data para número serial do Excel
-                        try:
-                            if isinstance(value, str):
-                                date_obj = pd.to_datetime(value)
-                            else:
-                                date_obj = value
-                            
-                            if pd.notna(date_obj):
-                                # Converter para número serial do Excel e aplicar formato de data
-                                excel_serial = _datetime_to_excel_serial(date_obj)
-                                worksheet.write(row_idx, col_idx, excel_serial, date_style)
-                            else:
-                                worksheet.write(row_idx, col_idx, "")
-                        except:
-                            worksheet.write(row_idx, col_idx, str(value) if value else "")
+                    elif col_idx in date_col_indices:
+                        worksheet.write(row_idx, col_idx, value, date_style)
                     else:
                         worksheet.write(row_idx, col_idx, value)
             
@@ -160,14 +160,21 @@ class Gerador:
                 worksheet.col(i).width = max(3000, min(10000, len(col) * 256 + 512))
             
             # Salvar arquivo
-            workbook.save(str(path))
+            try:
+                workbook.save(str(path))
+            except PermissionError as e:
+                logger.error(f"Sem permissão para salvar '{path}': {e}")
+                raise BRServiceError(f"Sem permissão para salvar o arquivo '{path}'", codigo="PERMISSION_DENIED")
+            except OSError as e:
+                logger.error(f"Erro de I/O ao salvar '{path}': {e}")
+                raise BRServiceError(f"Erro ao salvar o arquivo '{path}': {e}", codigo="IO_ERROR")
 
-        # Progresso por arquivo
-        if progress_cb:
-            progress_cb(idx, total, str(path))
+            # Progresso por arquivo
+            if progress_cb:
+                progress_cb(idx, total, str(path))
 
-        logger.info(f"Arquivo gerado: {path}")
-        out_paths.append(path)
+            logger.info(f"Arquivo gerado: {path}")
+            out_paths.append(path)
 
         if not out_paths:
             logger.warning("Nenhum arquivo foi gerado (todos os blocos estavam vazios).")
@@ -236,12 +243,19 @@ class Gerador:
                 k += 1
             
             # Salva como CSV com separador ;
-            df_out.to_csv(path, sep=';', index=False, encoding='utf-8', lineterminator='\n')
-            
+            try:
+                df_out.to_csv(path, sep=';', index=False, encoding='utf-8', lineterminator='\n')
+            except PermissionError as e:
+                logger.error(f"Sem permissão para salvar '{path}': {e}")
+                raise BRServiceError(f"Sem permissão para salvar o arquivo '{path}'", codigo="PERMISSION_DENIED")
+            except OSError as e:
+                logger.error(f"Erro de I/O ao salvar '{path}': {e}")
+                raise BRServiceError(f"Erro ao salvar o arquivo '{path}': {e}", codigo="IO_ERROR")
+
             # Progresso por arquivo
             if progress_cb:
                 progress_cb(idx, total, str(path))
-                
+
             logger.info(f"Arquivo CSV gerado: {path}")
             out_paths.append(path)
         

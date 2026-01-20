@@ -119,14 +119,16 @@ class Configuracao:
 
     def _carregar_configuracao(self) -> None:
         base: Dict[str, Any] = DEFAULTS.copy()
+        _logger = logging.getLogger(__name__)
 
         # 1) Tente carregar config do usuário (gravável)
         if self.user_config_path.exists():
             try:
                 base.update(json.loads(self.user_config_path.read_text(encoding="utf-8")))
-            except Exception:
-                # se corrompido, ignora e continua com defaults/bundle
-                pass
+            except json.JSONDecodeError as e:
+                _logger.warning(f"Config do usuário corrompida (JSON inválido): {self.user_config_path} - {e}")
+            except (IOError, OSError) as e:
+                _logger.warning(f"Erro ao ler config do usuário: {self.user_config_path} - {e}")
         else:
             # 2) Se não há config do usuário, tente o empacotado (somente leitura) ou o dev
             src = None
@@ -138,22 +140,27 @@ class Configuracao:
             if src:
                 try:
                     base.update(json.loads(src.read_text(encoding="utf-8")))
-                except Exception:
-                    pass
+                except json.JSONDecodeError as e:
+                    _logger.warning(f"Config fonte corrompida (JSON inválido): {src} - {e}")
+                except (IOError, OSError) as e:
+                    _logger.warning(f"Erro ao ler config fonte: {src} - {e}")
                 # Cria a cópia do usuário na primeira execução (em local gravável)
                 try:
                     self.user_config_dir.mkdir(parents=True, exist_ok=True)
                     self.user_config_path.write_text(json.dumps(base, indent=2, ensure_ascii=False), encoding="utf-8")
-                except Exception:
-                    # se não conseguir escrever, segue apenas em memória
-                    pass
+                except PermissionError as e:
+                    _logger.warning(f"Sem permissão para criar config do usuário: {self.user_config_path} - {e}")
+                except (IOError, OSError) as e:
+                    _logger.warning(f"Erro ao criar config do usuário: {self.user_config_path} - {e}")
             else:
                 # nenhum arquivo encontrado; cria o do usuário com DEFAULTS
                 try:
                     self.user_config_dir.mkdir(parents=True, exist_ok=True)
                     self.user_config_path.write_text(json.dumps(base, indent=2, ensure_ascii=False), encoding="utf-8")
-                except Exception:
-                    pass
+                except PermissionError as e:
+                    _logger.warning(f"Sem permissão para criar config padrão: {self.user_config_path} - {e}")
+                except (IOError, OSError) as e:
+                    _logger.warning(f"Erro ao criar config padrão: {self.user_config_path} - {e}")
 
         # 3) Overrides por variáveis de ambiente
         for key in list(base.keys()):
@@ -170,9 +177,11 @@ class Configuracao:
     def definir_config(self, chave: str, valor: Any) -> None:
         """Grava somente na config do usuário (gravável)."""
         self.config[chave] = valor
+        _logger = logging.getLogger(__name__)
         try:
             self.user_config_dir.mkdir(parents=True, exist_ok=True)
             self.user_config_path.write_text(json.dumps(self.config, indent=2, ensure_ascii=False), encoding="utf-8")
-        except Exception:
-            # mantém em memória se não der para gravar
-            pass
+        except PermissionError as e:
+            _logger.warning(f"Sem permissão para gravar config: {self.user_config_path} - {e}")
+        except (IOError, OSError) as e:
+            _logger.warning(f"Erro ao gravar config: {self.user_config_path} - {e}")

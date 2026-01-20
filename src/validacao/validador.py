@@ -70,12 +70,19 @@ class Validador:
         if not path.is_dir():
             raise ErroValidacaoDados(f"'{path}' não é uma pasta.")
         # Testa permissão de escrita
+        test = path / ".perm_teste.tmp"
         try:
-            test = path / ".perm_teste.tmp"
             test.write_text("ok", encoding="utf-8")
-            test.unlink(missing_ok=True)
-        except Exception as e:
+        except PermissionError as e:
             raise ErroValidacaoDados(f"Sem permissão de escrita em '{path}': {e}")
+        except OSError as e:
+            raise ErroValidacaoDados(f"Erro ao testar escrita em '{path}': {e}")
+        finally:
+            # Garante remoção do arquivo temporário mesmo em caso de exceção
+            try:
+                test.unlink(missing_ok=True)
+            except OSError:
+                pass  # Ignora se não conseguir remover
 
         logger.debug(f"Pasta de saída válida: {path}")
         return path

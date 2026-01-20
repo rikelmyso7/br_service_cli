@@ -7,7 +7,7 @@ Orquestra a leitura, processamento, validação e geração de arquivos Excel.
 Lida com argumentos de linha de comando e comunicação via Standard I/O.
 """
 
-import argparse, json, os, sys
+import argparse, json, logging, os, sys
 from pathlib import Path
 import pandas as pd
 import xlwings as xw
@@ -33,17 +33,20 @@ log_dir = ROOT / config_app.obter_config('diretorio_logs')
 log_dir.mkdir(parents=True, exist_ok=True)
 log_file = log_dir / f"br_service_{os.getpid()}.log"
 
-# Logger será configurado depois de analisar argumentos para suporte ao --quiet
-logger = None
+# Nome do logger usado em todo o módulo - configurado em main()
+LOGGER_NAME = "br_service"
+
+def get_logger():
+    """Retorna o logger do módulo. Mais testável que variável global."""
+    return logging.getLogger(LOGGER_NAME)
 
 def configurar_logger_com_quiet(quiet_mode: bool):
     """Configura o logger baseado no modo quiet."""
     from src.utils.logger import configurar_logger
-    import logging
-    
+
     if quiet_mode:
         # Em modo quiet, redireciona console logs para stderr e reduz nível
-        logger_instance = logging.getLogger("br_service")
+        logger_instance = logging.getLogger(LOGGER_NAME)
         logger_instance.setLevel(config_app.obter_config('nivel_log'))
         logger_instance.propagate = False
         
@@ -80,7 +83,7 @@ def obter_opcoes(caminho_arquivo: str):
         dados_validos = leitor.ler_e_validar_dados_validos(caminho_arquivo)
 
         if not dados_validos.get("documentos"):
-            logger.warning("Nenhum dado válido encontrado na planilha Layout para extrair opções.")
+            get_logger().warning("Nenhum dado válido encontrado na planilha Layout para extrair opções.")
             print(json.dumps({"documentos": [], "planos_por_documento": {}, "datas": [], "dados_validos": dados_validos}, ensure_ascii=False))
             return
         
@@ -93,12 +96,15 @@ def obter_opcoes(caminho_arquivo: str):
         }
         
         print(json.dumps(opcoes_resposta, ensure_ascii=False))
-        logger.info("Opções com dados válidos enviadas para a UI.")
+        get_logger().info("Opções com dados válidos enviadas para a UI.")
     except BRServiceError as e:
-        logger.error(f"Erro ao obter opções: {e.mensagem}")
+        get_logger().error(f"Erro ao obter opções: {e.mensagem}")
         print(json.dumps({"erro": e.mensagem}, ensure_ascii=False))
+    except (IOError, OSError, PermissionError) as e:
+        get_logger().error(f"Erro de I/O ao obter opções: {e}")
+        print(json.dumps({"erro": f"Erro de acesso ao arquivo: {e}"}, ensure_ascii=False))
     except Exception as e:
-        logger.critical(f"Erro inesperado ao obter opções: {e}")
+        get_logger().critical(f"Erro inesperado ao obter opções: {e}")
         print(json.dumps({"erro": f"Erro inesperado: {e}"}, ensure_ascii=False))
 
 def obter_datas(caminho_arquivo: str):
@@ -109,7 +115,7 @@ def obter_datas(caminho_arquivo: str):
         dados_validos = leitor.ler_e_validar_dados_validos(caminho_arquivo)
 
         if not dados_validos.get("documentos"):
-            logger.warning("Nenhum dado válido encontrado na planilha Layout para extrair datas.")
+            get_logger().warning("Nenhum dado válido encontrado na planilha Layout para extrair datas.")
             print(json.dumps({"datas_por_documento": {}}, ensure_ascii=False))
             return
         
@@ -119,12 +125,15 @@ def obter_datas(caminho_arquivo: str):
         }
         
         print(json.dumps(datas_resposta, ensure_ascii=False))
-        logger.info("Datas por documento enviadas para a UI.")
+        get_logger().info("Datas por documento enviadas para a UI.")
     except BRServiceError as e:
-        logger.error(f"Erro ao obter datas: {e.mensagem}")
+        get_logger().error(f"Erro ao obter datas: {e.mensagem}")
         print(json.dumps({"erro": e.mensagem}, ensure_ascii=False))
+    except (IOError, OSError, PermissionError) as e:
+        get_logger().error(f"Erro de I/O ao obter datas: {e}")
+        print(json.dumps({"erro": f"Erro de acesso ao arquivo: {e}"}, ensure_ascii=False))
     except Exception as e:
-        logger.critical(f"Erro inesperado ao obter datas: {e}")
+        get_logger().critical(f"Erro inesperado ao obter datas: {e}")
         print(json.dumps({"erro": f"Erro inesperado: {e}"}, ensure_ascii=False))
 
 def processar_e_gerar(caminho_arquivo: str, pasta_destino: str, documentos_selecionados=None, datas_selecionadas=None, nome_pasta: str | None = None, progress: bool = False):
@@ -147,15 +156,17 @@ def processar_e_gerar(caminho_arquivo: str, pasta_destino: str, documentos_selec
 
         # Opções disponíveis para validar seleções
         fmt = config_app.obter_config('formato_data_excel')
-        # Cria lista de documento-plano a partir das chaves dos dados processados
+        # OTIMIZAÇÃO: Loop único para extrair documentos e datas (ao invés de dois loops separados)
+        # Nota: Data Crédito já é datetime (convertido em leitor.py), evita reconversão
         documentos_disponiveis = []
-        for (doc, plano) in dados_brutos_por_bloco.keys():
-            documentos_disponiveis.append(f"{doc}-{plano}")
-        documentos_disponiveis = sorted(documentos_disponiveis)
         todas_datas = []
-        for df_bloco in dados_brutos_por_bloco.values():
-            s = pd.to_datetime(df_bloco["Data Crédito"], errors="coerce", dayfirst=True).dropna().dt.strftime(fmt)
-            todas_datas.extend(s.tolist())
+        for (doc, plano), df_bloco in dados_brutos_por_bloco.items():
+            documentos_disponiveis.append(f"{doc}-{plano}")
+            # Usa diretamente .dt pois a coluna já é datetime
+            datas_bloco = df_bloco["Data Crédito"].dropna()
+            if not datas_bloco.empty:
+                todas_datas.extend(datas_bloco.dt.strftime(fmt).tolist())
+        documentos_disponiveis = sorted(documentos_disponiveis)
         datas_disponiveis = sorted(set(todas_datas))
 
         if progress: emit_event("validate", msg="Validando seleções", progress=0.35)
@@ -191,19 +202,19 @@ def processar_e_gerar(caminho_arquivo: str, pasta_destino: str, documentos_selec
         )
 
         if progress: emit_event("done", msg="Concluído", progress=1.0, files=len(arquivos))
-        logger.info("Processamento e geração concluídos.")
+        get_logger().info("Processamento e geração concluídos.")
         if not progress:
             print(json.dumps({"sucesso": "Arquivos gerados com sucesso!"}, ensure_ascii=False))
 
     except BRServiceError as e:
         if progress: emit_event("ERROR", msg=e.mensagem or "Erro")
-        logger.error(...)
+        get_logger().error(f"Erro ao processar: {e.mensagem}")
         print(json.dumps({"codigo": e.codigo, "mensagem": e.mensagem, "detalhes": e.detalhes}, ensure_ascii=False))
         sys.exit(1)
 
     except Exception as e:
         if progress: emit_event("ERROR", msg=str(e))
-        logger.critical(...)
+        get_logger().critical(f"Erro inesperado: {e}")
         print(json.dumps({"erro": f"Erro inesperado: {e}"}, ensure_ascii=False))
         sys.exit(1)
 
@@ -223,14 +234,33 @@ def main():
     parser.add_argument("--get-contas", action="store_true", help="Analisa contas e retorna JSON com contas ativas e inativas")
 
     args = parser.parse_args()
-    
+
     # Configura o logger baseado nos argumentos
-    global logger
     quiet_mode = args.quiet and (args.get_options or args.get_datas)
-    logger = configurar_logger_com_quiet(quiet_mode)
+    configurar_logger_com_quiet(quiet_mode)
     
     input_path = args.input.strip('"') if args.input else None
     output_path = args.output.strip('"') if args.output else None
+
+    # Validação do arquivo de entrada
+    if input_path:
+        input_file = Path(input_path)
+        if not input_file.exists():
+            get_logger().error(f"Arquivo de entrada não encontrado: {input_path}")
+            print(json.dumps({"erro": f"Arquivo de entrada não encontrado: {input_path}"}, ensure_ascii=False))
+            sys.exit(1)
+        if not input_file.is_file():
+            get_logger().error(f"O caminho informado não é um arquivo: {input_path}")
+            print(json.dumps({"erro": f"O caminho informado não é um arquivo: {input_path}"}, ensure_ascii=False))
+            sys.exit(1)
+        if not input_file.suffix.lower() in ('.xlsx', '.xls', '.xlsm'):
+            get_logger().warning(f"Extensão de arquivo não reconhecida: {input_file.suffix}")
+
+    # Validação do argumento --conta
+    if args.conta is not None and args.conta <= 0:
+        get_logger().error(f"O valor de --conta deve ser um número positivo, recebido: {args.conta}")
+        print(json.dumps({"erro": f"O valor de --conta deve ser um número positivo, recebido: {args.conta}"}, ensure_ascii=False))
+        sys.exit(1)
 
     documentos_selecionados = args.documentos.split(",") if args.documentos else None
     datas_selecionadas = args.datas.split(",") if args.datas else None
@@ -247,16 +277,34 @@ def main():
             processador = Processador()
             processador.atualizar_conta(input_path, args.conta)
             print(json.dumps({"sucesso": f"Conta atualizada para {args.conta}"}, ensure_ascii=False))
+        except BRServiceError as e:
+            get_logger().error(f"Erro ao atualizar conta: {e.mensagem}")
+            print(json.dumps({"erro": e.mensagem}, ensure_ascii=False))
+            sys.exit(1)
+        except (IOError, OSError, PermissionError) as e:
+            get_logger().error(f"Erro de I/O ao atualizar conta: {e}")
+            print(json.dumps({"erro": f"Erro de acesso ao arquivo: {e}"}, ensure_ascii=False))
+            sys.exit(1)
         except Exception as e:
-            print(json.dumps({"erro": f"Erro ao atualizar conta: {e}"}, ensure_ascii=False))
+            get_logger().critical(f"Erro inesperado ao atualizar conta: {e}")
+            print(json.dumps({"erro": f"Erro inesperado: {e}"}, ensure_ascii=False))
             sys.exit(1)
     elif args.get_contas:
         try:
             processador = Processador()
             result = processador.analisar_contas(input_path)
             print(result)
+        except BRServiceError as e:
+            get_logger().error(f"Erro ao analisar contas: {e.mensagem}")
+            print(json.dumps({"erro": e.mensagem}, ensure_ascii=False))
+            sys.exit(1)
+        except (IOError, OSError, PermissionError) as e:
+            get_logger().error(f"Erro de I/O ao analisar contas: {e}")
+            print(json.dumps({"erro": f"Erro de acesso ao arquivo: {e}"}, ensure_ascii=False))
+            sys.exit(1)
         except Exception as e:
-            print(json.dumps({"erro": f"Erro ao analisar contas: {e}"}, ensure_ascii=False))
+            get_logger().critical(f"Erro inesperado ao analisar contas: {e}")
+            print(json.dumps({"erro": f"Erro inesperado: {e}"}, ensure_ascii=False))
             sys.exit(1)
     else:
         if not output_path:
