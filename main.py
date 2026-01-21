@@ -118,12 +118,12 @@ def obter_datas(caminho_arquivo: str):
             get_logger().warning("Nenhum dado válido encontrado na planilha Layout para extrair datas.")
             print(json.dumps({"datas_por_documento": {}}, ensure_ascii=False))
             return
-        
+
         # Retorna apenas as datas por documento
         datas_resposta = {
             "datas_por_documento": dados_validos.get("datas_por_documento", {})
         }
-        
+
         print(json.dumps(datas_resposta, ensure_ascii=False))
         get_logger().info("Datas por documento enviadas para a UI.")
     except BRServiceError as e:
@@ -135,6 +135,71 @@ def obter_datas(caminho_arquivo: str):
     except Exception as e:
         get_logger().critical(f"Erro inesperado ao obter datas: {e}")
         print(json.dumps({"erro": f"Erro inesperado: {e}"}, ensure_ascii=False))
+
+
+def obter_todos_dados(caminho_arquivo: str):
+    """
+    Retorna todos os dados de análise em uma única chamada.
+    Combina: get-options + get-datas + get-contas
+    Reduz overhead de múltiplas chamadas ao CLI.
+    """
+    leitor = LeitorExcel()
+    processador = Processador()
+
+    resultado = {
+        "documentos": [],
+        "planos_por_documento": {},
+        "datas": [],
+        "datas_por_documento": {},
+        "block_counts": {},
+        "colunas_obrigatorias": {
+            "todas_presentes": False,
+            "presentes": [],
+            "ausentes": []
+        },
+        "contas_ativas": {},
+        "contas_inativas": {},
+    }
+
+    try:
+        # 1. Obtém dados válidos (documentos, planos, datas)
+        get_logger().info("Obtendo dados válidos do arquivo...")
+        dados_validos = leitor.ler_e_validar_dados_validos(caminho_arquivo)
+
+        if dados_validos.get("documentos"):
+            resultado["documentos"] = dados_validos["documentos"]
+            resultado["planos_por_documento"] = dados_validos["planos_por_documento"]
+            resultado["datas"] = dados_validos["datas"]
+            resultado["datas_por_documento"] = dados_validos.get("datas_por_documento", {})
+            resultado["block_counts"] = dados_validos.get("block_counts", {})
+            resultado["colunas_obrigatorias"] = dados_validos.get("colunas_obrigatorias", resultado["colunas_obrigatorias"])
+
+        # 2. Obtém análise de contas
+        get_logger().info("Analisando contas...")
+        try:
+            contas_json = processador.analisar_contas(caminho_arquivo)
+            contas_data = json.loads(contas_json)
+            resultado["contas_ativas"] = contas_data.get("contas_ativas", {})
+            resultado["contas_inativas"] = contas_data.get("contas_inativas", {})
+        except Exception as e:
+            get_logger().warning(f"Erro ao analisar contas (não crítico): {e}")
+            # Continua mesmo se falhar a análise de contas
+
+        print(json.dumps(resultado, ensure_ascii=False))
+        get_logger().info("Todos os dados enviados para a UI via --get-all.")
+
+    except BRServiceError as e:
+        get_logger().error(f"Erro ao obter todos os dados: {e.mensagem}")
+        print(json.dumps({"erro": e.mensagem}, ensure_ascii=False))
+        sys.exit(1)
+    except (IOError, OSError, PermissionError) as e:
+        get_logger().error(f"Erro de I/O ao obter todos os dados: {e}")
+        print(json.dumps({"erro": f"Erro de acesso ao arquivo: {e}"}, ensure_ascii=False))
+        sys.exit(1)
+    except Exception as e:
+        get_logger().critical(f"Erro inesperado ao obter todos os dados: {e}")
+        print(json.dumps({"erro": f"Erro inesperado: {e}"}, ensure_ascii=False))
+        sys.exit(1)
 
 def processar_e_gerar(caminho_arquivo: str, pasta_destino: str, documentos_selecionados=None, datas_selecionadas=None, nome_pasta: str | None = None, progress: bool = False):
     """Processa e gera arquivos com base nas seleções."""
@@ -225,6 +290,7 @@ def main():
     parser.add_argument("--output", help="Pasta de destino dos arquivos gerados.")
     parser.add_argument("--get-options", action="store_true", help="Mostra documentos/planos/datas disponíveis.")
     parser.add_argument("--get-datas", action="store_true", help="Mostra datas separadas por cada documento-plano.")
+    parser.add_argument("--get-all", action="store_true", help="Retorna todos os dados de análise em uma única chamada (combina get-options + get-datas + get-contas).")
     parser.add_argument("--documentos", help="Ex: AZ,REG")
     parser.add_argument("--datas", help="Ex: 05/05/2025,27/05/2025")
     parser.add_argument("--nome-pasta", help="Nome da pasta que será criada para os arquivos gerados")
@@ -236,7 +302,7 @@ def main():
     args = parser.parse_args()
 
     # Configura o logger baseado nos argumentos
-    quiet_mode = args.quiet and (args.get_options or args.get_datas)
+    quiet_mode = args.quiet and (args.get_options or args.get_datas or args.get_all)
     configurar_logger_com_quiet(quiet_mode)
     
     input_path = args.input.strip('"') if args.input else None
@@ -268,7 +334,9 @@ def main():
     # Se o usuário não passar --nome-pasta, usa o nome do arquivo de entrada (sem extensão)
     nome_pasta = args.nome_pasta or Path(args.input).stem
 
-    if args.get_options:
+    if args.get_all:
+        obter_todos_dados(input_path)
+    elif args.get_options:
         obter_opcoes(input_path)
     elif args.get_datas:
         obter_datas(input_path)
