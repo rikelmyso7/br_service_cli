@@ -62,42 +62,78 @@ pip install -r requirements.txt
 
 | Argumento | Tipo | Descrição |
 |-----------|------|-----------|
-| `--input` | string | **(Obrigatório)** Caminho do arquivo Excel de entrada |
+| `--input` | string | **(Obrigatório, exceto em `--daemon`)** Caminho do arquivo Excel de entrada |
 | `--output` | string | Pasta de destino dos arquivos gerados |
 | `--get-options` | flag | Retorna documentos, planos e datas disponíveis (JSON) |
+| `--get-all` | flag | Retorna todos os dados de análise em uma única chamada — combina `get-options` + `get-datas` + `get-contas` |
+| `--get-preview` | flag | Retorna cabeçalhos e linhas da planilha Layout para preview (JSON) |
 | `--get-datas` | flag | Retorna datas separadas por documento-plano (JSON) |
+| `--get-contas` | flag | Analisa e retorna contas ativas/inativas (JSON) |
+| `--daemon` | flag | Inicia em modo daemon: lê comandos JSON de stdin e responde em stdout (elimina cold start) |
 | `--documentos` | string | Filtro de documentos (separados por vírgula) |
 | `--datas` | string | Filtro de datas no formato DD/MM/AAAA (separadas por vírgula) |
 | `--nome-pasta` | string | Nome personalizado para pasta de saída |
 | `--progress` | flag | Emite eventos NDJSON de progresso no stdout |
 | `--quiet` | flag | Suprime logs no console (apenas arquivo) |
 | `--conta` | int | Atualiza o número da conta na planilha Layout |
-| `--get-contas` | flag | Analisa e retorna contas ativas/inativas (JSON) |
 
 ### Exemplos
 
-**Obter opções disponíveis:**
+**Obter todos os dados em uma única chamada (recomendado):**
 ```bash
-python main.py --input planilha.xlsx --get-options --quiet
+br_service_cli.exe --input planilha.xlsx --get-all --quiet
 ```
 
-Retorna JSON:
+Retorna JSON com documentos, planos, datas, contas e contagens:
 ```json
 {
   "documentos": ["AZ-1.01.02.01", "REG-1.04.01.08"],
   "planos_por_documento": {"AZ-1.01.02.01": ["1.01.02.01"]},
-  "datas": ["05/05/2025", "27/05/2025"]
+  "datas": ["05/05/2025", "27/05/2025"],
+  "datas_por_documento": {"AZ-1.01.02.01": ["05/05/2025"]},
+  "block_counts": {},
+  "contas_ativas": {},
+  "contas_inativas": {}
 }
 ```
 
+**Obter preview da planilha para exibição:**
+```bash
+br_service_cli.exe --input planilha.xlsx --get-preview --quiet
+```
+
+Retorna JSON com cabeçalhos e linhas:
+```json
+{
+  "headers": ["Contrato", "Valor", "Data Crédito"],
+  "rows": [["ABC123", "1500.00", "05/05/2025"]]
+}
+```
+
+**Modo daemon (elimina cold start — usado pela UI):**
+```bash
+br_service_cli.exe --daemon
+```
+
+Protocolo stdin/stdout (NDJSON, uma linha por mensagem):
+```json
+→ stdin:  {"cmd": "get-all", "input": "C:\\planilha.xlsx"}
+← stdout: {"documentos": [...], "planos_por_documento": {...}, ...}
+
+→ stdin:  {"cmd": "get-preview", "input": "C:\\planilha.xlsx"}
+← stdout: {"headers": [...], "rows": [[...]]}
+```
+
+Comandos suportados no daemon: `get-all`, `get-preview`, `get-options`, `get-datas`, `get-contas`.
+
 **Gerar arquivos com filtros:**
 ```bash
-python main.py --input planilha.xlsx --output ./saida --documentos AZ-1.01.02.01 --datas 05/05/2025
+br_service_cli.exe --input planilha.xlsx --output ./saida --documentos AZ-1.01.02.01 --datas 05/05/2025
 ```
 
 **Gerar todos os arquivos com progresso:**
 ```bash
-python main.py --input planilha.xlsx --output ./saida --progress
+br_service_cli.exe --input planilha.xlsx --output ./saida --progress
 ```
 
 Emite eventos NDJSON:
@@ -110,12 +146,7 @@ Emite eventos NDJSON:
 
 **Atualizar conta na planilha:**
 ```bash
-python main.py --input planilha.xlsx --conta 12345
-```
-
-**Analisar contas disponíveis:**
-```bash
-python main.py --input planilha.xlsx --get-contas
+br_service_cli.exe --input planilha.xlsx --conta 12345
 ```
 
 ## Configuração
@@ -172,10 +203,12 @@ Arquivos `.xls` gerados com estrutura:
 Para gerar executável standalone:
 
 ```bash
-python build.py
+python build.py --name br_service --onefile --console --clean --noconfirm --icon "assets/app_icon.ico"
 ```
 
-O executável será criado na pasta `dist/`.
+O executável será criado na pasta `dist/` como `br_service.exe`.
+
+> **Nota:** Após gerar o executável, copie `dist/br_service.exe` para `lib/assets/br_service_cli.exe` no projeto Flutter antes de compilar a UI.
 
 ## Tratamento de Erros
 
@@ -200,6 +233,16 @@ Logs são salvos em `logs/br_service_<pid>.log` com formato:
 ```
 2025-05-05 10:30:00 | INFO | br_service | main:99 | Opções enviadas para a UI
 ```
+
+## Observações sobre OneDrive
+
+O comando `--conta` usa automação COM do Excel (xlwings) para atualizar a célula B1 da aba Layout. Em arquivos localizados em pastas sincronizadas pelo **OneDrive**, o Excel COM pode interceptar a operação de save e exibir um diálogo interativo, travando o processo.
+
+A implementação atual resolve isso com uma estratégia **copy-modify-replace**: o arquivo é copiado para `%TEMP%`, modificado lá, e depois copiado de volta para o destino original via `shutil.copy2` — sem envolver o COM do Excel no save final.
+
+## Changelog
+
+Veja o histórico completo de alterações em [docs/CHANGELOG.md](docs/CHANGELOG.md).
 
 ## Licença
 

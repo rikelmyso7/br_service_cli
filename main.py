@@ -137,6 +137,111 @@ def obter_datas(caminho_arquivo: str):
         print(json.dumps({"erro": f"Erro inesperado: {e}"}, ensure_ascii=False))
 
 
+def _run_cmd(fn, *args):
+    """Executa fn() capturando o que ela printa; suprime SystemExit."""
+    import io as _io
+    buf = _io.StringIO()
+    old = sys.stdout
+    sys.stdout = buf
+    try:
+        fn(*args)
+    except SystemExit:
+        pass  # erro já foi printado no buf
+    finally:
+        sys.stdout = old
+    return buf.getvalue().strip()
+
+
+def run_daemon():
+    """
+    Modo daemon: lê comandos JSON de stdin (uma linha por comando) e
+    escreve respostas JSON em stdout (uma linha por resposta).
+    Protocolo entrada:  {"cmd": "get-all", "input": "/path/file.xlsx"}
+    Protocolo saída:    <json retornado pela função correspondente>
+    """
+    configurar_logger_com_quiet(quiet_mode=True)
+    logger = get_logger()
+    logger.info("Daemon iniciado.")
+
+    # Força UTF-8 em stdin/stdout independente do codepage do sistema (Windows)
+    import io as _io_daemon
+    sys.stdin  = _io_daemon.TextIOWrapper(sys.stdin.buffer,  encoding='utf-8')
+    sys.stdout = _io_daemon.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', line_buffering=True)
+
+    processador_inst = Processador()
+
+    # Sinaliza ao cliente Dart que está pronto para receber comandos
+    sys.stderr.write("DAEMON_READY\n")
+    sys.stderr.flush()
+
+    for raw in sys.stdin:
+        raw = raw.strip()
+        if not raw:
+            continue
+        try:
+            req = json.loads(raw)
+            cmd = req.get('cmd', '')
+            inp = req.get('input', '').strip('"')
+
+            if cmd == 'get-all':
+                out = _run_cmd(obter_todos_dados, inp)
+            elif cmd == 'get-preview':
+                out = _run_cmd(obter_preview, inp)
+            elif cmd == 'get-options':
+                out = _run_cmd(obter_opcoes, inp)
+            elif cmd == 'get-datas':
+                out = _run_cmd(obter_datas, inp)
+            elif cmd == 'get-contas':
+                out = _run_cmd(lambda p: print(processador_inst.analisar_contas(p)), inp)
+            else:
+                out = json.dumps({"erro": f"Comando desconhecido: {cmd}"}, ensure_ascii=False)
+
+            sys.stdout.write(out + '\n')
+            sys.stdout.flush()
+        except Exception as e:
+            logger.error(f"Daemon dispatch error: {e}", exc_info=True)
+            sys.stdout.write(json.dumps({"erro": str(e)}, ensure_ascii=False) + '\n')
+            sys.stdout.flush()
+
+
+def obter_preview(caminho_arquivo: str):
+    """Lê apenas a aba Layout e retorna headers + rows como JSON leve para exibição."""
+    from datetime import datetime, date
+    import openpyxl
+
+    def cell_to_str(val):
+        if val is None:
+            return ''
+        if isinstance(val, (datetime, date)):
+            return val.strftime('%d/%m/%Y')
+        return str(val).strip()
+
+    try:
+        wb = openpyxl.load_workbook(caminho_arquivo, read_only=True, data_only=True)
+        if 'Layout' not in wb.sheetnames:
+            print(json.dumps({"erro": "Aba 'Layout' não encontrada no arquivo."}, ensure_ascii=False))
+            wb.close()
+            return
+
+        ws = wb['Layout']
+        all_rows = [[cell_to_str(cell) for cell in row] for row in ws.iter_rows(values_only=True)]
+        wb.close()
+
+        # Primeira linha não-vazia é o cabeçalho
+        header_idx = next((i for i, r in enumerate(all_rows) if any(c for c in r)), 0)
+        headers = all_rows[header_idx]
+        data_rows = [r for r in all_rows[header_idx + 1:] if any(c for c in r)]
+
+        print(json.dumps({"headers": headers, "rows": data_rows}, ensure_ascii=False))
+        get_logger().info("Preview da aba Layout enviado.")
+    except (IOError, OSError, PermissionError) as e:
+        get_logger().error(f"Erro de I/O ao obter preview: {e}")
+        print(json.dumps({"erro": f"Erro de acesso ao arquivo: {e}"}, ensure_ascii=False))
+    except Exception as e:
+        get_logger().critical(f"Erro inesperado ao obter preview: {e}")
+        print(json.dumps({"erro": f"Erro inesperado: {e}"}, ensure_ascii=False))
+
+
 def obter_todos_dados(caminho_arquivo: str):
     """
     Retorna todos os dados de análise em uma única chamada.
@@ -286,11 +391,12 @@ def processar_e_gerar(caminho_arquivo: str, pasta_destino: str, documentos_selec
 
 def main():
     parser = argparse.ArgumentParser(description="Sistema BR Service para processamento de arquivos Excel.")
-    parser.add_argument("--input", required=True, help="Caminho do Excel de entrada.")
+    parser.add_argument("--input", required=False, default=None, help="Caminho do Excel de entrada.")
     parser.add_argument("--output", help="Pasta de destino dos arquivos gerados.")
     parser.add_argument("--get-options", action="store_true", help="Mostra documentos/planos/datas disponíveis.")
     parser.add_argument("--get-datas", action="store_true", help="Mostra datas separadas por cada documento-plano.")
     parser.add_argument("--get-all", action="store_true", help="Retorna todos os dados de análise em uma única chamada (combina get-options + get-datas + get-contas).")
+    parser.add_argument("--get-preview", action="store_true", help="Retorna headers e rows da aba Layout como JSON leve para exibição na UI.")
     parser.add_argument("--documentos", help="Ex: AZ,REG")
     parser.add_argument("--datas", help="Ex: 05/05/2025,27/05/2025")
     parser.add_argument("--nome-pasta", help="Nome da pasta que será criada para os arquivos gerados")
@@ -298,6 +404,7 @@ def main():
     parser.add_argument("--quiet", action="store_true", help="Suprime logs no console quando usado com --get-options (logs vão apenas para arquivo)")
     parser.add_argument("--conta", type=int, help="Atualiza a conta na planilha Layout")
     parser.add_argument("--get-contas", action="store_true", help="Analisa contas e retorna JSON com contas ativas e inativas")
+    parser.add_argument("--daemon", action="store_true", help="Modo daemon: lê comandos JSON de stdin e escreve respostas em stdout.")
 
     args = parser.parse_args()
 
@@ -328,6 +435,14 @@ def main():
         print(json.dumps({"erro": f"O valor de --conta deve ser um número positivo, recebido: {args.conta}"}, ensure_ascii=False))
         sys.exit(1)
 
+    if args.daemon:
+        run_daemon()
+        return
+
+    if not input_path:
+        print(json.dumps({"erro": "Parâmetro --input é obrigatório."}, ensure_ascii=False))
+        sys.exit(2)
+
     documentos_selecionados = args.documentos.split(",") if args.documentos else None
     datas_selecionadas = args.datas.split(",") if args.datas else None
 
@@ -336,6 +451,8 @@ def main():
 
     if args.get_all:
         obter_todos_dados(input_path)
+    elif args.get_preview:
+        obter_preview(input_path)
     elif args.get_options:
         obter_opcoes(input_path)
     elif args.get_datas:

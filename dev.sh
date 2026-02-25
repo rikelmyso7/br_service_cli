@@ -31,7 +31,7 @@ show_menu() {
     echo "========================================"
     echo ""
     echo "[1] Buildar projeto (gerar executavel)"
-    echo "[2] Rodar testes basicos"
+    echo "[2] Rodar testes (pytest + cobertura)"
     echo "[3] Testar com arquivo real"
     echo "[4] Limpar builds e cache"
     echo "[5] Instalar/Atualizar dependencias"
@@ -131,13 +131,13 @@ build_project() {
 }
 
 # ========================================
-# OPCAO 2: TESTES BASICOS
+# OPCAO 2: TESTES (pytest + cobertura)
 # ========================================
 run_tests() {
     clear
     echo ""
     echo "========================================"
-    echo "  RODANDO TESTES BASICOS"
+    echo "  RODANDO TESTES (pytest + cobertura)"
     echo "========================================"
     echo ""
 
@@ -145,57 +145,80 @@ run_tests() {
     activate_venv
 
     echo ""
-    echo -e "${BLUE}[INFO]${NC} Verificando pytest..."
+    echo -e "${BLUE}[INFO]${NC} Verificando pytest e pytest-cov..."
     if ! python3 -c "import pytest" &> /dev/null; then
         echo -e "${BLUE}[INFO]${NC} pytest nao encontrado. Instalando..."
-        pip install pytest
+        pip install pytest pytest-cov
+    fi
+    if ! python3 -c "import pytest_cov" &> /dev/null; then
+        echo -e "${BLUE}[INFO]${NC} pytest-cov nao encontrado. Instalando..."
+        pip install pytest-cov
     fi
 
     echo ""
-    echo -e "${BLUE}[TEST 1]${NC} Importacao de modulos"
-    echo "----------------------------------------"
-    python3 -c "from src.processamento.leitor import LeitorExcel; from src.processamento.processador import Processador; from src.processamento.gerador import Gerador; print('[OK] Todos os modulos importados com sucesso')"
-    if [ $? -ne 0 ]; then
-        echo -e "${RED}[ERRO]${NC} Falha na importacao de modulos"
-        read -p "Pressione Enter para continuar..."
-        return
+    echo -e "${BLUE}[INFO]${NC} Verificando xlrd (necessario para testes do gerador)..."
+    if ! python3 -c "import xlrd" &> /dev/null; then
+        echo -e "${BLUE}[INFO]${NC} xlrd nao encontrado. Instalando..."
+        pip install xlrd
     fi
 
     echo ""
-    echo -e "${BLUE}[TEST 2]${NC} Validacao de configuracao"
-    echo "----------------------------------------"
-    python3 -c "from src.config.configuracao import Configuracao; c = Configuracao('config.json'); print('[OK] Configuracao carregada:', c.obter_config('sheet_name'))"
-    if [ $? -ne 0 ]; then
-        echo -e "${RED}[ERRO]${NC} Falha ao carregar configuracao"
-        read -p "Pressione Enter para continuar..."
-        return
+    echo -e "${BLUE}[INFO]${NC} Escolha o grupo de testes:"
+    echo "  [a] Todos (unitarios + integracao daemon)"
+    echo "  [u] Apenas unitarios (leitor, processador, validador, gerador)"
+    echo "  [d] Apenas integracao daemon/CLI (requer arquivo real)"
+    echo ""
+    read -p "Grupo [a/u/d] (Enter = unitarios): " grupo
+
+    echo ""
+    case "$grupo" in
+        d)
+            echo -e "${BLUE}[INFO]${NC} Rodando testes de integracao daemon/CLI..."
+            python3 -m pytest tests/test_daemon_protocol.py -v --tb=short -s
+            ;;
+        a)
+            echo -e "${BLUE}[INFO]${NC} Rodando todos os testes com cobertura..."
+            python3 -m pytest tests/ \
+                -v --tb=short \
+                --cov=src --cov-report=term-missing --cov-report=html:htmlcov
+            ;;
+        *)
+            echo -e "${BLUE}[INFO]${NC} Rodando testes unitarios com cobertura..."
+            python3 -m pytest \
+                tests/test_leitor.py \
+                tests/test_processador.py \
+                tests/test_validador.py \
+                tests/test_gerador.py \
+                -v --tb=short \
+                --cov=src --cov-report=term-missing --cov-report=html:htmlcov
+            ;;
+    esac
+
+    EXIT_CODE=$?
+
+    if [ $EXIT_CODE -ne 0 ]; then
+        echo ""
+        echo -e "${YELLOW}[AVISO]${NC} Alguns testes falharam. Verifique o output acima."
+    else
+        echo ""
+        echo "========================================"
+        echo -e "  ${GREEN}TODOS OS TESTES PASSARAM!${NC}"
+        echo "========================================"
     fi
 
     echo ""
-    echo -e "${BLUE}[TEST 3]${NC} Teste de parse de valores"
-    echo "----------------------------------------"
-    python3 -c "from src.processamento.leitor import _parse_valor; import pandas as pd; v1 = _parse_valor('1.234,56'); v2 = _parse_valor('628.91'); print(f'[OK] Parse BR: {v1}, Parse US: {v2}')"
-    if [ $? -ne 0 ]; then
-        echo -e "${RED}[ERRO]${NC} Falha no parse de valores"
-        read -p "Pressione Enter para continuar..."
-        return
+    if [ -f "htmlcov/index.html" ]; then
+        echo -e "${BLUE}[INFO]${NC} Relatorio HTML gerado em: htmlcov/index.html"
+        read -p "Abrir relatorio de cobertura? (S/N): " abrir_cov
+        if [[ "$abrir_cov" =~ ^[Ss]$ ]]; then
+            if command -v xdg-open &> /dev/null; then
+                xdg-open htmlcov/index.html
+            elif command -v open &> /dev/null; then
+                open htmlcov/index.html
+            fi
+        fi
     fi
 
-    echo ""
-    echo -e "${BLUE}[TEST 4]${NC} Verificacao de dependencias"
-    echo "----------------------------------------"
-    python3 -c "import pandas; import openpyxl; import xlsxwriter; print(f'[OK] pandas {pandas.__version__}')"
-    python3 -c "import openpyxl; print(f'[OK] openpyxl {openpyxl.__version__}')"
-    if [ $? -ne 0 ]; then
-        echo -e "${RED}[ERRO]${NC} Dependencias faltando"
-        read -p "Pressione Enter para continuar..."
-        return
-    fi
-
-    echo ""
-    echo "========================================"
-    echo "  TODOS OS TESTES PASSARAM!"
-    echo "========================================"
     echo ""
     read -p "Pressione Enter para continuar..."
 }

@@ -5,6 +5,9 @@ import pandas as pd
 from datetime import datetime
 import xlwings as xw
 import json
+import shutil
+import tempfile
+import os
 
 from utils.logger import configurar_logger
 
@@ -200,12 +203,20 @@ class Processador:
 
     def atualizar_conta(self, caminho_arquivo: str, nova_conta: int):
         """Atualiza a conta na célula B1 da planilha Layout do arquivo Excel."""
+        tmp_path = None
         try:
             logger.info(f"Atualizando conta para {nova_conta} no arquivo {caminho_arquivo}")
-            
+
+            # Copia para path temporário sem acentos para evitar falhas COM/OneDrive
+            ext = os.path.splitext(caminho_arquivo)[1]
+            tmp_fd, tmp_path = tempfile.mkstemp(suffix=ext, prefix="br_service_")
+            os.close(tmp_fd)
+            shutil.copy2(caminho_arquivo, tmp_path)
+            logger.info(f"Arquivo copiado para temp: {tmp_path}")
+
             with xw.App(visible=False) as app:
                 app.display_alerts = False
-                wb = app.books.open(caminho_arquivo, update_links=False, read_only=False)
+                wb = app.books.open(tmp_path, update_links=False, read_only=False)
                 sht = wb.sheets["Layout"]
                 sht.range("B1").value = str(nova_conta)
 
@@ -217,13 +228,21 @@ class Processador:
 
                 wb.save()
                 wb.close()
-            
+
+            # Copia o temp modificado de volta para o destino original
+            shutil.copy2(tmp_path, caminho_arquivo)
             logger.info(f"Conta atualizada com sucesso para {nova_conta}")
             return True
-            
+
         except Exception as e:
             logger.error(f"Erro ao atualizar conta: {e}")
             raise
+        finally:
+            if tmp_path and os.path.exists(tmp_path):
+                try:
+                    os.remove(tmp_path)
+                except Exception:
+                    pass
 
     def analisar_contas(self, file_path: str) -> dict:
         """

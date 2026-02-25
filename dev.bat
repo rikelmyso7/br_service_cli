@@ -22,7 +22,7 @@ echo   BR SERVICE - MENU DE DESENVOLVIMENTO
 echo ========================================
 echo.
 echo [1] Buildar projeto (gerar .exe)
-echo [2] Rodar testes basicos
+echo [2] Rodar testes (pytest + cobertura)
 echo [3] Testar com arquivo real
 echo [4] Limpar builds e cache
 echo [5] Instalar/Atualizar dependencias
@@ -107,7 +107,7 @@ echo [INFO] Iniciando build...
 echo [INFO] Isso pode levar alguns minutos...
 echo.
 
-python build.py --name br_service --onefile --console --clean --noconfirm --icon "assets/app_icon.ico"
+python build.py --name br_service_cli --onefile --console --clean --noconfirm --icon "assets/app_icon.ico"
 
 if errorlevel 1 (
     echo.
@@ -139,13 +139,13 @@ pause
 goto MENU
 
 REM ========================================
-REM OPCAO 2: TESTES BASICOS
+REM OPCAO 2: TESTES (pytest + cobertura)
 REM ========================================
 :TEST
 cls
 echo.
 echo ========================================
-echo   RODANDO TESTES BASICOS
+echo   RODANDO TESTES (pytest + cobertura)
 echo ========================================
 echo.
 
@@ -153,58 +153,82 @@ call :CHECK_PYTHON
 call :ACTIVATE_VENV
 
 echo.
-echo [INFO] Verificando pytest...
+echo [INFO] Verificando pytest e pytest-cov...
 python -c "import pytest" >nul 2>&1
 if errorlevel 1 (
     echo [INFO] pytest nao encontrado. Instalando...
-    pip install pytest
+    pip install pytest pytest-cov
 )
-
-echo.
-echo [TEST 1] Importacao de modulos
-echo ----------------------------------------
-python -c "from src.processamento.leitor import LeitorExcel; from src.processamento.processador import Processador; from src.processamento.gerador import Gerador; print('[OK] Todos os modulos importados com sucesso')"
+python -c "import pytest_cov" >nul 2>&1
 if errorlevel 1 (
-    echo [ERRO] Falha na importacao de modulos
-    pause
-    goto MENU
+    echo [INFO] pytest-cov nao encontrado. Instalando...
+    pip install pytest-cov
 )
 
 echo.
-echo [TEST 2] Validacao de configuracao
-echo ----------------------------------------
-python -c "from src.config.configuracao import Configuracao; c = Configuracao('config.json'); print('[OK] Configuracao carregada:', c.obter_config('sheet_name'))"
+echo [INFO] Verificando xlrd (necessario para testes do gerador)...
+python -c "import xlrd" >nul 2>&1
 if errorlevel 1 (
-    echo [ERRO] Falha ao carregar configuracao
-    pause
-    goto MENU
+    echo [INFO] xlrd nao encontrado. Instalando...
+    pip install xlrd
 )
 
 echo.
-echo [TEST 3] Teste de parse de valores
+echo [INFO] Executando suite de testes...
 echo ----------------------------------------
-python -c "from src.processamento.leitor import _parse_valor; import pandas as pd; v1 = _parse_valor('1.234,56'); v2 = _parse_valor('628.91'); print(f'[OK] Parse BR: {v1}, Parse US: {v2}')"
+echo.
+
+REM Pergunta qual grupo de testes rodar
+echo [a] Todos os testes (unitarios + integracao daemon)
+echo [u] Apenas testes unitarios (leitor, processador, validador, gerador)
+echo [d] Apenas testes de integracao daemon/CLI (requer arquivo real)
+echo.
+set /p grupo="Escolha o grupo [a/u/d] (Enter = todos unitarios): "
+
+if /i "%grupo%"=="d" goto TEST_DAEMON
+if /i "%grupo%"=="a" goto TEST_ALL
+goto TEST_UNIT
+
+:TEST_UNIT
+echo.
+echo [INFO] Rodando testes unitarios com cobertura...
+python -m pytest tests\test_leitor.py tests\test_processador.py tests\test_validador.py tests\test_gerador.py ^
+    -v --tb=short ^
+    --cov=src --cov-report=term-missing --cov-report=html:htmlcov ^
+    --ignore=tests\test_daemon_protocol.py
+goto TEST_DONE
+
+:TEST_ALL
+echo.
+echo [INFO] Rodando todos os testes com cobertura...
+python -m pytest tests\ ^
+    -v --tb=short ^
+    --cov=src --cov-report=term-missing --cov-report=html:htmlcov
+goto TEST_DONE
+
+:TEST_DAEMON
+echo.
+echo [INFO] Rodando testes de integracao daemon/CLI...
+python -m pytest tests\test_daemon_protocol.py -v --tb=short -s
+goto TEST_DONE
+
+:TEST_DONE
 if errorlevel 1 (
-    echo [ERRO] Falha no parse de valores
-    pause
-    goto MENU
+    echo.
+    echo [AVISO] Alguns testes falharam. Verifique o output acima.
+) else (
+    echo.
+    echo ========================================
+    echo   TODOS OS TESTES PASSARAM!
+    echo ========================================
 )
 
 echo.
-echo [TEST 4] Verificacao de dependencias
-echo ----------------------------------------
-python -c "import pandas; import openpyxl; import xlsxwriter; print(f'[OK] pandas {pandas.__version__}')"
-python -c "import openpyxl; print(f'[OK] openpyxl {openpyxl.__version__}')"
-if errorlevel 1 (
-    echo [ERRO] Dependencias faltando
-    pause
-    goto MENU
+if exist "htmlcov\index.html" (
+    echo [INFO] Relatorio HTML de cobertura gerado em: htmlcov\index.html
+    set /p abrir_cov="Deseja abrir o relatorio de cobertura? (S/N): "
+    if /i "!abrir_cov!"=="S" start "" "htmlcov\index.html"
 )
-
-echo.
-echo ========================================
-echo   TODOS OS TESTES PASSARAM!
-echo ========================================
 echo.
 pause
 goto MENU
